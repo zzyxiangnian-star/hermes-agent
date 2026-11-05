@@ -1,29 +1,108 @@
-// Bot 商店页面：G03 由 Gemini 制作，Claude 审查接入（依赖未检测时显示中性状态）。
-import { useEffect, useMemo, useRef, useState } from 'react'
+// Bot 商店页面（HG06）：直接复用 Hermes 原生 Capabilities 组件（CapabilitySearch、CatalogFilterBar、CatalogSurface、CatalogDetailDialog）。
 import {
   Badge,
   Button,
   cn,
   Codicon,
-  SearchField,
-  Skeleton,
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  Tip
+  DialogTitle,
+  icons,
+  Loader,
+  PanelEmpty,
+  RowButton,
+  SegmentedControl,
+  Tip,
+  useI18n
 } from '@hermes/plugin-sdk'
+import { useEffect, useMemo, useState } from 'react'
+
+import { syncCatalogArcs } from '@/app/capabilities/catalog/catalog-arc'
+import { type CatalogEntry, catalogLabel } from '@/app/capabilities/catalog/catalog-data'
+import { CatalogDetailDialog } from '@/app/capabilities/catalog/catalog-detail-dialog'
+import { CatalogFilterBar } from '@/app/capabilities/catalog/catalog-filter-bar'
+import type { FacetRow } from '@/app/capabilities/catalog/catalog-filters'
+import { CatalogHeaderMeta, CatalogMetadata } from '@/app/capabilities/catalog/catalog-metadata'
+import { type CatalogFacets, EMPTY_FACETS } from '@/app/capabilities/catalog/catalog-query'
+import { CapabilityEmpty } from '@/app/capabilities/primitives'
+import { CapabilitySearch } from '@/app/capabilities/ui/capability-search'
+import { CatalogSurface, type CatalogSurfaceItem, type CatalogSurfaceSection } from '@/app/capabilities/ui/catalog-surface'
 
 import type { InstallState, StoreBot, StoreCategory, StorePageProps, StoreRequirement } from './store-types'
 
-type CategoryTab = 'all' | StoreCategory
+const { Check, Loader2, Plus } = icons
 
-const SKELETON_KEYS = ['s1', 's2', 's3', 's4', 's5', 's6']
+type StoreSort = 'default' | 'name'
+
+const CATEGORY_LABELS: Record<StoreCategory, string> = {
+  kit: '场景套装',
+  general: '通用 Bot'
+}
 
 function hasMissingReq(requires?: StoreRequirement[]): boolean {
   return Boolean(requires?.some(req => req.ok === false))
 }
 
-/** 更新已安装的 Bot。默认保留本机 config.yaml（可能改过模型）；按住 Shift 点或点“含配置”会连配置一起更新。 */
+function itemEyebrow(item: StoreBot): string {
+  if (item.category === 'kit') {
+    const count = item.bots?.length ?? 0
+
+    return count > 0 ? `场景套装 · 含 ${count} 个 Bot` : '场景套装'
+  }
+
+  const parts: string[] = []
+
+  if (item.toolsets?.length) {
+    parts.push(`工具集 ${item.toolsets.length}`)
+  }
+
+  if (item.mcp?.length) {
+    parts.push(`MCP ${item.mcp.length}`)
+  }
+
+  if (item.skills?.length) {
+    parts.push(`技能 ${item.skills.length}`)
+  }
+
+  return parts.join(' · ') || '预设 Bot'
+}
+
+function itemBadge(item: StoreBot): string {
+  if (item.tags?.length) {
+    return item.tags.slice(0, 2).join(' · ')
+  }
+
+  return CATEGORY_LABELS[item.category]
+}
+
+function toCatalogEntry(item: StoreBot): CatalogEntry {
+  return {
+    id: item.id,
+    name: item.name,
+    description: item.summary,
+    overview: item.description || item.summary,
+    category: item.category,
+    categoryLabel: CATEGORY_LABELS[item.category],
+    source: itemBadge(item),
+    author: itemEyebrow(item),
+    identifier: item.id,
+    repo: item.repo || '',
+    sha: '',
+    subdir: '',
+    version: '',
+    requiresHermes: '',
+    tags: item.tags ?? [],
+    platforms: [],
+    requirements: (item.requires ?? []).map(r => r.name),
+    tools: item.toolsets ?? [],
+    hooks: [],
+    sourceUrl: item.repo && /^https?:\/\//i.test(item.repo) ? item.repo : null,
+    docsUrl: null,
+    imageUrl: null,
+    stars: null,
+    search: [item.id, item.name, item.summary, item.description ?? '', ...(item.tags ?? [])].join(' ').toLowerCase()
+  }
+}
+
+/** 更新已安装的 Bot。默认保留本机 config.yaml（可能改过模型）；按住 Shift 点击会连 config.yaml 一起更新。 */
 function UpdateButton({ item, onUpdate }: { item: StoreBot; onUpdate: NonNullable<StorePageProps['onUpdate']> }) {
   const [state, setState] = useState<{ kind: 'idle' | 'busy' | 'done' | 'error'; message?: string }>({ kind: 'idle' })
 
@@ -68,43 +147,51 @@ function UpdateButton({ item, onUpdate }: { item: StoreBot; onUpdate: NonNullabl
   )
 }
 
-function CardActionButton({
+function StoreActionButton({
   item,
   state,
   onInstall,
-  onOpenBot
+  onOpenBot,
+  onUpdate
 }: {
   item: StoreBot
   state: InstallState
   onInstall: (item: StoreBot) => void
   onOpenBot: (id: string) => void
+  onUpdate?: StorePageProps['onUpdate']
 }) {
   if (state.kind === 'installed') {
     return (
-      <Button
-        onClick={event => {
-          event.stopPropagation()
-          onOpenBot(item.id)
-        }}
-        size="xs"
-        variant="secondary"
-      >
-        <Codicon name="comment-discussion" size="0.75rem" />
-        打开
-      </Button>
+      <span className="inline-flex items-center gap-1" onClick={event => event.stopPropagation()}>
+        {onUpdate && item.category !== 'kit' && <UpdateButton item={item} onUpdate={onUpdate} />}
+        <Button
+          aria-label={`打开 ${item.name}`}
+          onClick={event => {
+            event.stopPropagation()
+            onOpenBot(item.id)
+          }}
+          size="xs"
+          variant="secondary"
+        >
+          <Check className="size-3.5" />
+          打开
+        </Button>
+      </span>
     )
   }
 
   if (state.kind === 'installing') {
     return (
       <Button
+        aria-busy="true"
+        aria-label={`正在添加 ${item.name}`}
         disabled
         onClick={event => event.stopPropagation()}
         size="xs"
-        variant="secondary"
+        variant="outline"
       >
-        <Codicon name="loading" size="0.75rem" spinning />
-        安装中
+        <Loader2 className="size-3.5 animate-spin text-(--ui-text-tertiary)" />
+        添加中
       </Button>
     )
   }
@@ -129,553 +216,261 @@ function CardActionButton({
 
   return (
     <Button
+      aria-label={`添加 ${item.name}`}
       onClick={event => {
         event.stopPropagation()
         onInstall(item)
       }}
       size="xs"
-      variant="default"
+      variant="outline"
     >
-      <Codicon name="add" size="0.75rem" />
+      <Plus className="size-3.5" />
       添加
     </Button>
   )
 }
 
-function BotCard({
+function StoreBotDetail({
   item,
-  state,
-  selected,
-  onSelect,
-  onInstall,
-  onOpenBot
-}: {
-  item: StoreBot
-  state: InstallState
-  selected: boolean
-  onSelect: (item: StoreBot) => void
-  onInstall: (item: StoreBot) => void
-  onOpenBot: (id: string) => void
-}) {
-  const isKit = item.category === 'kit'
-  const missingReq = hasMissingReq(item.requires)
-
-  return (
-    <article
-      className={cn(
-        'group relative flex min-w-0 flex-col justify-between gap-3 rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-card) p-3.5 transition-[transform,border-color,box-shadow] duration-150 hover:-translate-y-0.5 hover:border-(--ui-accent)/45 hover:shadow-xs',
-        selected && 'border-(--ui-accent) ring-1 ring-(--ui-accent)/30'
-      )}
-    >
-      <div className="flex min-w-0 flex-col gap-2">
-        <div className="flex min-w-0 items-start gap-2.5">
-          <div
-            className={cn(
-              'flex size-8 shrink-0 items-center justify-center rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-quinary) text-(--ui-text-secondary) transition-colors group-hover:text-(--ui-accent)',
-              isKit && 'text-(--ui-accent)'
-            )}
-          >
-            <Codicon name={item.icon || (isKit ? 'package' : 'hubot')} size="1rem" />
-          </div>
-
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <h2 className="min-w-0 truncate text-[0.8125rem] font-semibold leading-snug text-(--ui-text-secondary)">
-                <button
-                  aria-expanded={selected}
-                  aria-haspopup="dialog"
-                  className="max-w-full cursor-pointer truncate text-left after:absolute after:inset-0 after:rounded-lg focus-visible:outline-hidden after:focus-visible:outline-2 after:focus-visible:outline-(--ui-accent) after:focus-visible:-outline-offset-2"
-                  onClick={() => onSelect(item)}
-                  type="button"
-                >
-                  {item.name}
-                </button>
-              </h2>
-              {isKit && (
-                <Badge size="xs" variant="default">
-                  套装{item.bots?.length ? ` · ${item.bots.length}` : ''}
-                </Badge>
-              )}
-              {state.kind === 'installed' && (
-                <span
-                  aria-label="已安装"
-                  className="ml-auto inline-flex shrink-0 items-center gap-1 text-[0.6875rem] text-(--ui-success)"
-                >
-                  <Codicon name="check" size="0.7rem" />
-                </span>
-              )}
-            </div>
-            <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-(--ui-text-tertiary)">
-              {item.summary}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex min-w-0 items-end justify-between gap-2 pt-1">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-          {item.tags?.map(tag => (
-            <Badge key={tag} size="xs" variant="muted">
-              {tag}
-            </Badge>
-          ))}
-          {missingReq && state.kind !== 'installed' && (
-            <span className="inline-flex items-center gap-0.5 px-1 text-[0.65rem] text-(--ui-warning)">
-              <Codicon name="warning" size="0.6875rem" />
-              <span>依赖待配</span>
-            </span>
-          )}
-        </div>
-
-        <div className="relative z-10 shrink-0">
-          <CardActionButton item={item} onInstall={onInstall} onOpenBot={onOpenBot} state={state} />
-        </div>
-      </div>
-    </article>
-  )
-}
-
-function StoreSkeletonGrid() {
-  return (
-    <div
-      aria-busy="true"
-      aria-label="正在加载商店目录"
-      className="grid grid-cols-1 gap-3 @min-[601px]:grid-cols-2 @min-[920px]:grid-cols-3"
-    >
-      {SKELETON_KEYS.map(key => (
-        <div
-          className="flex flex-col justify-between gap-3 rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-card) p-3.5"
-          key={key}
-        >
-          <div className="flex items-start gap-2.5">
-            <Skeleton className="size-8 shrink-0 rounded-lg" />
-            <div className="min-w-0 flex-1 space-y-2">
-              <Skeleton className="h-3.5 w-2/5 rounded" />
-              <Skeleton className="h-3 w-full rounded" />
-              <Skeleton className="h-3 w-4/5 rounded" />
-            </div>
-          </div>
-          <div className="flex items-center justify-between pt-1">
-            <div className="flex gap-1">
-              <Skeleton className="h-4 w-11 rounded" />
-              <Skeleton className="h-4 w-11 rounded" />
-            </div>
-            <Skeleton className="h-6 w-14 rounded" />
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function StoreDetailDrawer({
-  item,
-  parentKit,
+  entry,
   allItems,
   installState,
-  onClose,
   onInstall,
   onOpenBot,
+  onUpdate,
   onSelectBot,
-  onBackToKit,
-  onUpdate
+  onCategory,
+  onTag,
+  onSearch
 }: {
-  onUpdate?: StorePageProps['onUpdate']
-  item: StoreBot | null
-  parentKit: StoreBot | null
+  item: StoreBot
+  entry: CatalogEntry
   allItems: StoreBot[]
   installState: (id: string) => InstallState
-  onClose: () => void
   onInstall: (item: StoreBot) => void
   onOpenBot: (id: string) => void
-  onSelectBot: (item: StoreBot, fromKit: StoreBot) => void
-  onBackToKit: () => void
+  onUpdate?: StorePageProps['onUpdate']
+  onSelectBot: (id: string) => void
+  onCategory: (category: string) => void
+  onTag: (tag: string) => void
+  onSearch: (value: string) => void
 }) {
-  const [copied, setCopied] = useState(false)
-  const copyTimerRef = useRef<number | undefined>(undefined)
-  const panelRef = useRef<HTMLElement | null>(null)
-
-  // Retain the last displayed item during the 200ms slide-out transition
-  const lastItemRef = useRef<StoreBot | null>(item)
-  if (item) {
-    lastItemRef.current = item
-  }
-  const activeItem = item ?? lastItemRef.current
-  const activeState = activeItem ? installState(activeItem.id) : null
-  const open = item !== null
-
-  useEffect(() => {
-    setCopied(false)
-    return () => {
-      if (copyTimerRef.current !== undefined) {
-        window.clearTimeout(copyTimerRef.current)
-      }
-    }
-  }, [activeItem?.id])
-
-  useEffect(() => {
-    if (!open) return undefined
-    const timer = window.setTimeout(() => {
-      panelRef.current?.focus()
-    }, 20)
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.stopPropagation()
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      window.clearTimeout(timer)
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [open, onClose])
-
-  const copyRepo = async () => {
-    if (!activeItem) return
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(activeItem.repo || '')
-      }
-      setCopied(true)
-      if (copyTimerRef.current !== undefined) {
-        window.clearTimeout(copyTimerRef.current)
-      }
-      copyTimerRef.current = window.setTimeout(() => setCopied(false), 1800)
-    } catch {
-      // Clipboard write unavailable in restricted context
-    }
-  }
-
-  const isKit = activeItem?.category === 'kit'
-  const requires = activeItem?.requires ?? []
-  const missingReq = hasMissingReq(requires)
-  const kitBots = useMemo(() => {
-    if (!activeItem?.bots?.length) return []
-    const map = new Map(allItems.map(entry => [entry.id, entry]))
-    return activeItem.bots.map(botId => ({
-      id: botId,
-      bot: map.get(botId),
-      botState: installState(botId)
-    }))
-  }, [activeItem, allItems, installState])
+  const { t } = useI18n()
+  const c = t.catalog
+  const state = installState(item.id)
+  const kitBots = useMemo(
+    () =>
+      item.category === 'kit' && item.bots?.length
+        ? item.bots.map(id => allItems.find(b => b.id === id) ?? { id, name: id, category: 'general' as const, summary: '' })
+        : [],
+    [allItems, item]
+  )
 
   return (
     <div
-      aria-hidden={!open}
-      className={cn(
-        'absolute inset-0 z-40 overflow-hidden transition-opacity duration-200',
-        open ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
-      )}
-      inert={!open || undefined}
+      className="min-w-0 space-y-5 pb-4 [&>:not(img)]:mx-4 [&>:first-child:not(img)]:mt-4"
+      data-catalog-detail="plugins"
     >
-      {/* Semi-transparent Backdrop */}
-      <div
-        aria-label="关闭详情抽屉"
-        className="absolute inset-0 bg-(--ui-text-secondary)/20 backdrop-blur-[2px]"
-        onClick={onClose}
-      />
-
-      {/* Drawer Panel */}
-      <aside
-        aria-label={activeItem ? `${activeItem.name} 详情` : 'Bot 详情'}
-        aria-modal="true"
-        className={cn(
-          'absolute top-0 right-0 flex h-full w-full max-w-[26rem] flex-col border-l border-(--ui-stroke-secondary) bg-(--ui-bg-elevated) shadow-xl transition-[transform,visibility] duration-200 ease-out focus:outline-hidden',
-          open ? 'visible translate-x-0' : 'invisible translate-x-full'
-        )}
-        ref={panelRef}
-        role="dialog"
-        tabIndex={-1}
-      >
-        {activeItem && activeState ? (
-          <>
-            {/* Optional Breadcrumb back to Kit */}
-            {parentKit && parentKit.id !== activeItem.id && (
-              <div className="flex items-center border-b border-(--ui-stroke-secondary) bg-(--ui-bg-card) px-4 py-1.5">
-                <Button onClick={onBackToKit} size="inline" variant="text">
-                  <Codicon name="arrow-left" size="0.75rem" />
-                  <span>返回「{parentKit.name}」</span>
-                </Button>
-              </div>
-            )}
-
-            {/* Drawer Header */}
-            <header className="flex items-start justify-between gap-3 border-b border-(--ui-stroke-secondary) px-4 py-3.5">
-              <div className="flex min-w-0 items-start gap-2.5">
-                <div
-                  className={cn(
-                    'flex size-9 shrink-0 items-center justify-center rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-card) text-(--ui-text-secondary)',
-                    isKit && 'text-(--ui-accent)'
-                  )}
-                >
-                  <Codicon name={activeItem.icon || (isKit ? 'package' : 'hubot')} size="1.125rem" />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <h3 className="text-sm font-semibold leading-snug text-(--ui-text-secondary)">
-                      {activeItem.name}
-                    </h3>
-                    <Badge size="xs" variant={isKit ? 'default' : 'muted'}>
-                      {isKit ? '场景套装' : '通用 Bot'}
-                    </Badge>
-                  </div>
-                  <p className="mt-0.5 text-xs leading-relaxed text-(--ui-text-tertiary)">
-                    {activeItem.summary}
-                  </p>
-                </div>
-              </div>
-
-              <Button
-                aria-label="关闭详情"
-                onClick={onClose}
-                size="icon-xs"
-                variant="ghost"
-              >
-                <Codicon name="close" size="0.875rem" />
-              </Button>
-            </header>
-
-            {/* Drawer Body */}
-            <div className="flex-1 space-y-4 overflow-y-auto px-4 py-3.5 text-xs">
-              {/* Tags */}
-              {activeItem.tags && activeItem.tags.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {activeItem.tags.map(tag => (
-                    <Badge key={tag} size="xs" variant="muted">
-                      {tag}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-
-              {/* Detailed Description */}
-              <section className="space-y-1.5">
-                <h4 className="text-[0.6875rem] font-semibold uppercase tracking-wider text-(--ui-text-quaternary)">
-                  详细介绍
-                </h4>
-                <div className="whitespace-pre-wrap leading-relaxed text-(--ui-text-secondary)">
-                  {activeItem.description || activeItem.summary}
-                </div>
-              </section>
-
-              {/* Kit Included Bots */}
-              {isKit && kitBots.length > 0 && (
-                <section className="min-w-0 space-y-1.5">
-                  <h4 className="text-[0.6875rem] font-semibold uppercase tracking-wider text-(--ui-text-quaternary)">
-                    包含的 Bot（{kitBots.length}）
-                  </h4>
-                  <ul className="grid min-w-0 gap-1.5">
-                    {kitBots.map(({ id, bot, botState }) => (
-                      <li
-                        className="flex min-w-0 items-center justify-between gap-2 rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-card) px-2.5 py-2"
-                        key={id}
-                      >
-                        <div className="flex min-w-0 flex-1 items-center gap-2">
-                          <Codicon
-                            className="shrink-0 text-(--ui-text-tertiary)"
-                            name={bot?.icon || 'hubot'}
-                            size="0.875rem"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex min-w-0 items-center gap-1.5">
-                              <span className="truncate font-medium text-(--ui-text-secondary)">
-                                {bot ? bot.name : id}
-                              </span>
-                              {botState.kind === 'installed' && (
-                                <span
-                                  aria-label="已安装"
-                                  className="inline-flex shrink-0 items-center text-(--ui-success)"
-                                >
-                                  <Codicon name="check" size="0.6875rem" />
-                                </span>
-                              )}
-                            </div>
-                            {bot?.summary && (
-                              <div className="truncate text-[0.6875rem] text-(--ui-text-tertiary)">
-                                {bot.summary}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        {bot && (
-                          <Button
-                            className="shrink-0"
-                            onClick={() => onSelectBot(bot, activeItem)}
-                            size="xs"
-                            variant="ghost"
-                          >
-                            查看
-                          </Button>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-
-              {/* Requirements Checklist */}
-              <section className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-[0.6875rem] font-semibold uppercase tracking-wider text-(--ui-text-quaternary)">
-                    依赖清单
-                  </h4>
-                  {requires.some(r => r.ok !== undefined) && (
-                    <span className="text-[0.6875rem] text-(--ui-text-quaternary)">
-                      {requires.filter(r => r.ok === true).length}/{requires.length} 就绪
-                    </span>
-                  )}
-                </div>
-
-                {requires.length === 0 ? (
-                  <div className="rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-card) px-3 py-2 text-(--ui-text-tertiary)">
-                    无需额外命令或环境变量依赖，开箱即用。
-                  </div>
-                ) : (
-                  <ul className="grid gap-1.5">
-                    {requires.map(req => {
-                      // ok 为 undefined 表示没检测（第一版不自动检测），显示中性圆点而不是 ✓/✗
-                      const ok = req.ok
-                      return (
-                        <li
-                          className="flex items-start gap-2 rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-card) px-2.5 py-2"
-                          key={`${req.kind}:${req.name}`}
-                        >
-                          <span
-                            aria-label={ok === undefined ? '需要' : ok ? '已满足' : '未满足'}
-                            className={cn(
-                              'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded font-semibold',
-                              ok === undefined ? 'text-(--ui-text-quaternary)' : ok ? 'text-(--ui-success)' : 'text-(--ui-warning)'
-                            )}
-                          >
-                            {ok === undefined ? '•' : ok ? '✓' : '✗'}
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <code className="font-mono text-[0.75rem] font-semibold text-(--ui-text-secondary)">
-                                {req.name}
-                              </code>
-                              <Badge size="xs" variant="outline">
-                                {req.kind === 'command' ? '命令' : '环境变量'}
-                              </Badge>
-                            </div>
-                            {req.hint && (
-                              <p className="mt-0.5 text-[0.6875rem] leading-snug text-(--ui-text-tertiary)">
-                                {req.hint}
-                              </p>
-                            )}
-                          </div>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-              </section>
-
-              {/* 预设内容：创建后自动套用 */}
-              {[
-                ['工具集', activeItem.toolsets],
-                ['技能', activeItem.skills],
-                ['MCP', activeItem.mcp?.map(m => m.name)]
-              ].map(([label, list]) =>
-                (list as string[] | undefined)?.length ? (
-                  <section className="space-y-1.5" key={label as string}>
-                    <h4 className="text-[0.6875rem] font-semibold uppercase tracking-wider text-(--ui-text-quaternary)">
-                      {label as string}
-                    </h4>
-                    <div className="flex flex-wrap gap-1">
-                      {(list as string[]).map(name => (
-                        <span
-                          className="rounded border border-(--ui-stroke-secondary) bg-(--ui-bg-quinary) px-1.5 py-0.5 font-mono text-[0.6875rem] text-(--ui-text-secondary)"
-                          key={name}
-                        >
-                          {name}
-                        </span>
-                      ))}
-                    </div>
-                  </section>
-                ) : null
-              )}
-
-              {/* Repository Link */}
-              {activeItem.repo ? (
-              <section className="space-y-1.5">
-                <h4 className="text-[0.6875rem] font-semibold uppercase tracking-wider text-(--ui-text-quaternary)">
-                  仓库地址
-                </h4>
-                <div className="flex items-center justify-between gap-2 rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-card) px-2.5 py-1.5">
-                  <div className="flex min-w-0 items-center gap-1.5 text-(--ui-text-tertiary)">
-                    <Codicon className="shrink-0" name="repo" size="0.8rem" />
-                    <code className="truncate font-mono text-[0.6875rem] text-(--ui-text-secondary)">
-                      {activeItem.repo}
-                    </code>
-                  </div>
-                  <Button
-                    aria-label={copied ? '已复制仓库地址' : '复制仓库地址'}
-                    onClick={() => void copyRepo()}
-                    size="xs"
-                    variant="ghost"
-                  >
-                    <Codicon
-                      className={cn(copied && 'text-(--ui-success)')}
-                      name={copied ? 'check' : 'copy'}
-                      size="0.75rem"
-                    />
-                    <span>{copied ? '已复制' : '复制'}</span>
-                  </Button>
-                </div>
-              </section>
-              ) : null}
-
-              {/* Install Error Detail inside Drawer */}
-              {activeState.kind === 'error' && (
-                <section className="rounded-lg border border-(--ui-warning)/40 bg-(--ui-bg-card) px-3 py-2">
-                  <div className="flex items-center gap-1.5 font-medium text-(--ui-warning)">
-                    <Codicon name="warning" size="0.8rem" />
-                    <span>上次安装失败</span>
-                  </div>
-                  <p className="mt-1 font-mono text-[0.6875rem] leading-relaxed text-(--ui-text-tertiary)">
-                    {activeState.message}
-                  </p>
-                </section>
-              )}
-            </div>
-
-            {/* Drawer Footer */}
-            <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-(--ui-stroke-secondary) bg-(--ui-bg-card) px-4 py-3">
-              <div className="min-w-0 flex-1">
-                {missingReq && activeState.kind !== 'installed' ? (
-                  <div className="flex items-start gap-1.5 text-[0.6875rem] leading-snug text-(--ui-warning)">
-                    <Codicon className="mt-0.5 shrink-0" name="warning" size="0.75rem" />
-                    <span>缺少依赖，仍可安装但可能无法正常工作</span>
-                  </div>
-                ) : activeState.kind === 'installed' ? (
-                  <div className="flex items-center gap-1.5 text-[0.6875rem] text-(--ui-success)">
-                    <Codicon name="check" size="0.75rem" />
-                    <span>已安装至当前环境</span>
-                  </div>
-                ) : (
-                  <span className="text-[0.6875rem] text-(--ui-text-quaternary)">
-                    打开新建窗口，替你填好人格、工具集、技能和 MCP；默认沿用 default 的模型和 Key
-                  </span>
-                )}
-              </div>
-
-              <div className="flex shrink-0 items-center gap-1.5">
-                {onUpdate && activeState.kind === 'installed' && activeItem.category === 'general' ? (
-                  <UpdateButton item={activeItem} key={activeItem.id} onUpdate={onUpdate} />
-                ) : null}
-                <CardActionButton
-                  item={activeItem}
+      <header className="space-y-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2 pr-7">
+              <DialogTitle className="min-w-0 flex-1 break-words text-lg font-semibold tracking-tight">
+                {item.name}
+              </DialogTitle>
+              <span className="shrink-0">
+                <StoreActionButton
+                  item={item}
                   onInstall={onInstall}
                   onOpenBot={onOpenBot}
-                  state={activeState}
+                  onUpdate={onUpdate}
+                  state={state}
                 />
+              </span>
+            </div>
+            <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-(--ui-text-tertiary)">
+              <span className="min-w-0 truncate">{entry.author || catalogLabel(entry.source)}</span>
+              <CatalogHeaderMeta entry={entry} />
+            </div>
+          </div>
+        </div>
+        {entry.sourceUrl && (
+          <div className="flex flex-wrap gap-3 text-xs">
+            <button
+              className="ref inline-flex cursor-pointer items-center gap-1 text-left"
+              onClick={() => void window.hermesDesktop?.openExternal?.(entry.sourceUrl!)}
+              type="button"
+            >
+              <span>{c.repository}</span>
+              <Codicon name="arrow-up-right" size="0.75rem" />
+            </button>
+          </div>
+        )}
+      </header>
+
+      <p className="whitespace-pre-wrap break-words text-[length:var(--conversation-caption-font-size)] leading-relaxed text-(--ui-text-secondary)">
+        {item.summary}
+      </p>
+      {item.description && item.description !== item.summary && (
+        <p className="whitespace-pre-wrap break-words text-[length:var(--conversation-caption-font-size)] leading-relaxed text-(--ui-text-tertiary)">
+          {item.description}
+        </p>
+      )}
+
+      <div className="space-y-3">
+        <CatalogMetadata entry={entry} limit={Infinity} onCategory={onCategory} onSearch={onSearch} onTag={onTag} />
+      </div>
+
+      {kitBots.length > 0 && (
+        <section className="space-y-2">
+          <h4 className="text-xs font-medium">套装包含的 Bot（{kitBots.length}）</h4>
+          <div className="flex flex-col gap-2">
+            {kitBots.map(bot => {
+              const botState = installState(bot.id)
+              const known = allItems.some(b => b.id === bot.id)
+
+              return (
+                <RowButton
+                  className="row-hover flex w-full min-w-0 items-center justify-between gap-3 rounded-lg border border-(--ui-stroke-tertiary) px-3 py-2.5 text-left"
+                  disabled={!known}
+                  key={bot.id}
+                  onClick={() => known && onSelectBot(bot.id)}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <Codicon className="text-(--ui-text-tertiary)" name={bot.icon || 'hubot'} size="0.875rem" />
+                      <span className="truncate text-xs font-medium">{bot.name}</span>
+                      <code className="font-mono text-[0.6875rem] text-(--ui-text-quaternary)">{bot.id}</code>
+                    </div>
+                    {bot.summary && (
+                      <p className="mt-1 line-clamp-1 text-xs text-(--ui-text-tertiary)">{bot.summary}</p>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Badge size="xs" variant={botState.kind === 'installed' ? 'success' : 'muted'}>
+                      {botState.kind === 'installed' ? '已添加' : botState.kind === 'installing' ? '添加中' : '未添加'}
+                    </Badge>
+                    {known && <Codicon className="text-(--ui-text-quaternary)" name="chevron-right" size="0.75rem" />}
+                  </div>
+                </RowButton>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
+      {Boolean(item.requires?.length) && (
+        <section className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="text-xs font-medium">{c.requires}</h4>
+            {hasMissingReq(item.requires) && (
+              <Badge size="xs" variant="muted">
+                部分依赖待配置
+              </Badge>
+            )}
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {item.requires?.map(req => (
+              <div
+                className="flex flex-col gap-1 rounded-lg border border-(--ui-stroke-tertiary) px-3 py-2 text-xs"
+                key={`${req.kind}:${req.name}`}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge size="xs" variant="muted">
+                    {req.kind === 'env' ? '环境变量' : '命令'}
+                  </Badge>
+                  <code className="font-mono font-medium">{req.name}</code>
+                  {req.ok === true && (
+                    <Badge className="ml-auto" size="xs" variant="success">
+                      已就绪
+                    </Badge>
+                  )}
+                  {req.ok === false && (
+                    <Badge className="ml-auto" size="xs" variant="muted">
+                      未配置
+                    </Badge>
+                  )}
+                </div>
+                {req.hint && <p className="text-(--ui-text-tertiary)">{req.hint}</p>}
               </div>
-            </footer>
-          </>
-        ) : null}
-      </aside>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {Boolean(item.toolsets?.length || item.skills?.length || item.mcp?.length || item.soul) && (
+        <section className="space-y-3">
+          <h4 className="text-xs font-medium">预设内容</h4>
+
+          {Boolean(item.toolsets?.length) && (
+            <div className="space-y-1.5">
+              <div className="text-xs text-(--ui-text-tertiary)">工具集（{item.toolsets?.length}）</div>
+              <div className="flex flex-wrap gap-1">
+                {item.toolsets?.map(toolset => (
+                  <Badge key={toolset} variant="muted">
+                    {toolset}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {Boolean(item.skills?.length) && (
+            <div className="space-y-1.5">
+              <div className="text-xs text-(--ui-text-tertiary)">技能（{item.skills?.length}）</div>
+              <div className="flex flex-wrap gap-1">
+                {item.skills?.map(skill => (
+                  <Badge key={skill} variant="muted">
+                    {skill}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {Boolean(item.mcp?.length) && (
+            <div className="space-y-1.5">
+              <div className="text-xs text-(--ui-text-tertiary)">MCP 服务（{item.mcp?.length}）</div>
+              <div className="flex flex-col gap-1.5">
+                {item.mcp?.map(server => {
+                  const cmd =
+                    server.preset
+                      ? `预设：${server.preset}`
+                      : typeof server.config?.url === 'string'
+                        ? server.config.url
+                        : typeof server.config?.command === 'string'
+                          ? [
+                              server.config.command,
+                              ...(Array.isArray(server.config.args) ? server.config.args.map(String) : [])
+                            ].join(' ')
+                          : ''
+
+                  return (
+                    <div
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-(--ui-stroke-tertiary) px-3 py-1.5 text-xs"
+                      key={server.name}
+                    >
+                      <code className="font-mono font-medium">{server.name}</code>
+                      {cmd && <span className="truncate font-mono text-(--ui-text-tertiary)">{cmd}</span>}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {item.soul && (
+            <details className="rounded-lg border border-(--ui-stroke-tertiary) px-3 py-2 text-xs">
+              <summary className="cursor-pointer select-none font-medium text-(--ui-text-secondary)">
+                预设人格（SOUL.md）
+              </summary>
+              <pre className="mt-2 max-h-44 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[0.72rem] leading-relaxed text-(--ui-text-tertiary)">
+                {item.soul.trim()}
+              </pre>
+            </details>
+          )}
+        </section>
+      )}
     </div>
   )
 }
@@ -690,217 +485,267 @@ export function StorePage({
   onRetryLoad,
   onUpdate
 }: StorePageProps) {
+  const { t } = useI18n()
   const [query, setQuery] = useState('')
-  const [category, setCategory] = useState<CategoryTab>('all')
+  const [facets, setFacets] = useState<CatalogFacets>(EMPTY_FACETS)
+  const [sort, setSort] = useState<StoreSort>('default')
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [parentKitId, setParentKitId] = useState<string | null>(null)
 
-  const counts = useMemo(() => {
-    let general = 0
-    let kit = 0
+  useEffect(syncCatalogArcs, [])
+
+  const categories = useMemo(
+    () =>
+      [
+        ['kit', { label: CATEGORY_LABELS.kit, count: items.filter(i => i.category === 'kit').length }],
+        ['general', { label: CATEGORY_LABELS.general, count: items.filter(i => i.category === 'general').length }]
+      ] as const,
+    [items]
+  )
+
+  const sources = useMemo(() => ['official'], [])
+
+  const tags = useMemo<FacetRow[]>(() => {
+    const counts = new Map<string, number>()
+
     for (const item of items) {
-      if (item.category === 'kit') kit += 1
-      else general += 1
+      for (const tag of item.tags ?? []) {
+        counts.set(tag, (counts.get(tag) ?? 0) + 1)
+      }
     }
-    return { all: items.length, general, kit }
+
+    return [...counts.entries()].map(([value, count]) => ({ value, label: value, count }))
   }, [items])
 
   const filteredItems = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return items.filter(item => {
-      if (category !== 'all' && item.category !== category) {
+
+    const list = items.filter(item => {
+      if (facets.categories.length > 0 && !facets.categories.includes(item.category)) {
         return false
       }
+
+      if (facets.installedOnly && installState(item.id).kind !== 'installed') {
+        return false
+      }
+
+      if (facets.tags.length > 0 && !facets.tags.some(tag => item.tags?.includes(tag))) {
+        return false
+      }
+
       if (!q) {
         return true
       }
-      const inName = item.name.toLowerCase().includes(q)
-      const inSummary = item.summary.toLowerCase().includes(q)
-      const inTags = Boolean(item.tags?.some(tag => tag.toLowerCase().includes(q)))
-      return inName || inSummary || inTags
+
+      const haystack = [
+        item.id,
+        item.name,
+        item.summary,
+        item.description ?? '',
+        ...(item.tags ?? []),
+        ...(item.requires?.map(r => r.name) ?? []),
+        ...(item.toolsets ?? []),
+        ...(item.skills ?? []),
+        ...(item.mcp?.map(m => m.name) ?? [])
+      ]
+        .join(' ')
+        .toLowerCase()
+
+      return haystack.includes(q)
     })
-  }, [items, category, query])
+
+    if (sort === 'name') {
+      return [...list].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+    }
+
+    return list
+  }, [facets, installState, items, query, sort])
+
+  const entriesById = useMemo(() => new Map(items.map(item => [item.id, toCatalogEntry(item)])), [items])
+
+  const orderedEntries = useMemo(
+    () => filteredItems.map(item => entriesById.get(item.id) ?? toCatalogEntry(item)),
+    [entriesById, filteredItems]
+  )
 
   const selectedItem = useMemo(
-    () => (selectedId ? items.find(item => item.id === selectedId) ?? null : null),
+    () => (selectedId ? (items.find(item => item.id === selectedId) ?? null) : null),
     [items, selectedId]
   )
 
-  const parentKit = useMemo(
-    () => (parentKitId ? items.find(item => item.id === parentKitId) ?? null : null),
-    [items, parentKitId]
+  const toSurfaceItem = (item: StoreBot): CatalogSurfaceItem => ({
+    id: item.id,
+    name: item.name,
+    description: item.summary,
+    eyebrow: itemEyebrow(item),
+    badge: itemBadge(item),
+    action: (
+      <StoreActionButton
+        item={item}
+        onInstall={onInstall}
+        onOpenBot={onOpenBot}
+        onUpdate={onUpdate}
+        state={installState(item.id)}
+      />
+    ),
+    onOpen: () => setSelectedId(item.id)
+  })
+
+  const sections = useMemo<CatalogSurfaceSection[]>(
+    () => [
+      {
+        id: 'kit',
+        label: CATEGORY_LABELS.kit,
+        blurb: '按业务场景组合好的多 Bot 协作套装，点添加会依次打开新建机器人窗口。',
+        layout: 'feature',
+        items: filteredItems.filter(item => item.category === 'kit').map(toSurfaceItem)
+      },
+      {
+        id: 'general',
+        label: CATEGORY_LABELS.general,
+        blurb: '开箱即用的单项能力 Bot，预置工具集、技能、MCP 服务与专属人格。',
+        layout: 'list',
+        items: filteredItems.filter(item => item.category === 'general').map(toSurfaceItem)
+      }
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filteredItems, installState, onInstall, onOpenBot, onUpdate]
   )
+
+  const toggleFacet = (field: 'categories' | 'sources' | 'tags', value: string | null) => {
+    setFacets(prev => {
+      if (value === null) {
+        return { ...prev, [field]: [] }
+      }
+
+      const list = prev[field]
+      const next = list.includes(value) ? list.filter(v => v !== value) : [...list, value]
+
+      return { ...prev, [field]: next }
+    })
+  }
 
   return (
-    <div className="@container relative flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-(--ui-bg-editor) text-(--ui-text-secondary)">
-      {/* Top Header: Title + Subtitle on left, SearchField on right */}
-      <header className="flex flex-col gap-3 border-b border-(--ui-stroke-secondary) px-5 pt-4 pb-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Codicon className="text-(--ui-accent)" name="extensions" size="1rem" />
-              <h1 className="text-sm font-semibold tracking-tight text-(--ui-text-secondary)">
-                Bot 商店
-              </h1>
-            </div>
-            <p className="mt-0.5 text-xs text-(--ui-text-tertiary)">
-              浏览并一键安装预置领域 Bot 与多智能体场景套装，即刻扩展你的本地工作台。
-            </p>
-          </div>
-
-          <div className="w-full @min-[601px]:w-64">
-            <SearchField
-              aria-label="搜索 Bot 商店"
-              containerClassName="w-full"
-              onChange={setQuery}
-              onClear={() => setQuery('')}
-              placeholder="搜索名称、简介或标签…"
-              value={query}
-            />
-          </div>
-        </div>
-
-        {/* Category Tabs */}
-        <div className="flex items-center justify-between gap-2">
-          <Tabs
-            onValueChange={val => setCategory(val as CategoryTab)}
-            value={category}
-          >
-            <TabsList>
-              <TabsTrigger value="all">
-                全部
-                {!loading && !loadError && (
-                  <span className="ml-1 text-[0.65rem] tabular-nums text-(--ui-text-quaternary)">
-                    {counts.all}
-                  </span>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="general">
-                通用 Bot
-                {!loading && !loadError && (
-                  <span className="ml-1 text-[0.65rem] tabular-nums text-(--ui-text-quaternary)">
-                    {counts.general}
-                  </span>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="kit">
-                场景套装
-                {!loading && !loadError && (
-                  <span className="ml-1 text-[0.65rem] tabular-nums text-(--ui-text-quaternary)">
-                    {counts.kit}
-                  </span>
-                )}
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-
-          {!loading && !loadError && (query.trim() || category !== 'all') && (
-            <span className="text-[0.6875rem] tabular-nums text-(--ui-text-quaternary)">
-              显示 {filteredItems.length} / {items.length} 项
-            </span>
-          )}
-        </div>
-      </header>
-
-      {/* Main Content Area */}
-      <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 py-4">
-        {loading ? (
-          <StoreSkeletonGrid />
-        ) : loadError ? (
-          <div
-            className="flex min-h-[16rem] flex-col items-center justify-center gap-2.5 rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-card) p-6 text-center"
-            role="alert"
-          >
-            <div className="flex size-9 items-center justify-center rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-quinary) text-(--ui-warning)">
-              <Codicon name="error" size="1.125rem" />
-            </div>
-            <div className="max-w-md space-y-1">
-              <div className="text-xs font-semibold text-(--ui-text-secondary)">
-                无法加载商店目录
-              </div>
-              <p className="text-xs leading-relaxed text-(--ui-text-tertiary)">
-                {loadError}
+    <section
+      aria-label="Bot 商店"
+      className="@container/catalog flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-(--ui-chat-surface-background)"
+      data-catalog="plugins"
+    >
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-catalog-results>
+        <header className="catalog-search-header shrink-0 space-y-3" data-catalog-header>
+          <div className="flex flex-wrap items-end justify-between gap-3 px-(--capabilities-inset)">
+            <div>
+              <h1 className="m-0 text-[1.4rem] font-semibold tracking-[-0.025em]">Bot 商店</h1>
+              <p className="mt-1 text-[0.8125rem] text-(--ui-text-tertiary)">
+                挑一个预设，点添加会打开新建机器人窗口并预填好人格、工具集、技能和 MCP。
               </p>
             </div>
-            <Button onClick={onRetryLoad} size="xs" variant="secondary">
-              <Codicon name="refresh" size="0.75rem" />
-              重试
-            </Button>
           </div>
-        ) : filteredItems.length === 0 ? (
-          <div className="flex min-h-[16rem] flex-col items-center justify-center gap-2.5 rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-card) p-6 text-center">
-            <div className="flex size-9 items-center justify-center rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-quinary) text-(--ui-text-quaternary)">
-              <Codicon name="search" size="1.125rem" />
-            </div>
-            <div className="max-w-sm space-y-1">
-              <div className="text-xs font-semibold text-(--ui-text-secondary)">
-                未找到匹配的 Bot
-              </div>
-              <p className="text-xs leading-relaxed text-(--ui-text-tertiary)">
-                {query.trim()
-                  ? `没有与「${query.trim()}」相关的名称、简介或标签，请尝试其他关键词。`
-                  : '当前分类下暂无可用的 Bot 或场景套装。'}
-              </p>
-            </div>
-            {(query.trim() || category !== 'all') && (
-              <Button
-                onClick={() => {
-                  setQuery('')
-                  setCategory('all')
-                }}
-                size="xs"
-                variant="secondary"
-              >
-                清除筛选条件
+          <CapabilitySearch
+            actions={
+              <Button onClick={onRetryLoad} size="xs" variant="ghost">
+                <Codicon name="refresh" size="0.75rem" />
+                {t.skills.refresh}
               </Button>
-            )}
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-3 @min-[601px]:grid-cols-2 @min-[920px]:grid-cols-3">
-            {filteredItems.map(item => (
-              <BotCard
-                item={item}
-                key={item.id}
+            }
+            hints={['网页爬取', '视频剪辑', '代码开发', '短视频运营']}
+            onChange={setQuery}
+            placeholder="搜索 Bot 名称、功能、标签或依赖…"
+            scope="Bot 商店"
+            value={query}
+          />
+        </header>
+
+        <CatalogFilterBar
+          actions={null}
+          categories={categories}
+          facets={facets}
+          kind="plugins"
+          onCategory={value => toggleFacet('categories', value)}
+          onClear={() => {
+            setFacets(EMPTY_FACETS)
+            setSort('default')
+          }}
+          onInstalled={() => setFacets(prev => ({ ...prev, installedOnly: !prev.installedOnly }))}
+          onSource={value => toggleFacet('sources', value)}
+          onTag={value => toggleFacet('tags', value)}
+          resultCount={filteredItems.length}
+          sortControl={
+            <SegmentedControl
+              onChange={setSort}
+              options={[
+                { id: 'default', label: t.catalog.featured },
+                { id: 'name', label: t.catalog.alphabetical }
+              ]}
+              sizing="equal"
+              value={sort}
+            />
+          }
+          sources={sources}
+          tags={tags}
+        />
+
+        <div className="flex min-h-0 flex-1 flex-col" data-catalog-cards="plugins">
+          {loading ? (
+            <div className="flex flex-1 items-center justify-center">
+              <Loader label={t.skills.loading} type="lemniscate-bloom" />
+            </div>
+          ) : loadError ? (
+            <div className="flex flex-1">
+              <PanelEmpty
+                action={
+                  <Button onClick={onRetryLoad} size="sm">
+                    {t.skills.refresh}
+                  </Button>
+                }
+                description={loadError}
+                icon="error"
+                title="加载 Bot 商店目录失败"
+              />
+            </div>
+          ) : filteredItems.length === 0 ? (
+            <CapabilityEmpty noun="bots" query={query} />
+          ) : (
+            <CatalogSurface kind="plugins" sections={sections} />
+          )}
+
+          <CatalogDetailDialog
+            onOpenChange={open => {
+              if (!open) {
+                setSelectedId(null)
+              }
+            }}
+            onSelect={setSelectedId}
+            open={selectedItem !== null}
+            order={orderedEntries.length > 0 ? orderedEntries : selectedItem ? [toCatalogEntry(selectedItem)] : []}
+            selectedId={selectedItem?.id ?? ''}
+          >
+            {selectedItem && (
+              <StoreBotDetail
+                allItems={items}
+                entry={entriesById.get(selectedItem.id) ?? toCatalogEntry(selectedItem)}
+                installState={installState}
+                item={selectedItem}
+                onCategory={category => {
+                  setFacets({ ...EMPTY_FACETS, categories: [category] })
+                  setSelectedId(null)
+                }}
                 onInstall={onInstall}
                 onOpenBot={onOpenBot}
-                onSelect={bot => {
-                  setParentKitId(null)
-                  setSelectedId(bot.id)
+                onSearch={value => {
+                  setQuery(value)
+                  setSelectedId(null)
                 }}
-                selected={selectedId === item.id}
-                state={installState(item.id)}
+                onSelectBot={setSelectedId}
+                onTag={tag => {
+                  setFacets({ ...EMPTY_FACETS, tags: [tag] })
+                  setSelectedId(null)
+                }}
+                onUpdate={onUpdate}
               />
-            ))}
-          </div>
-        )}
-      </main>
-
-      {/* Detail Drawer */}
-      <StoreDetailDrawer
-        allItems={items}
-        installState={installState}
-        item={selectedItem}
-        onBackToKit={() => {
-          if (parentKitId) {
-            setSelectedId(parentKitId)
-            setParentKitId(null)
-          }
-        }}
-        onClose={() => {
-          setSelectedId(null)
-          setParentKitId(null)
-        }}
-        onInstall={onInstall}
-        onUpdate={onUpdate}
-        onOpenBot={onOpenBot}
-        onSelectBot={(bot, fromKit) => {
-          setParentKitId(fromKit.id)
-          setSelectedId(bot.id)
-        }}
-        parentKit={parentKit}
-      />
-    </div>
+            )}
+          </CatalogDetailDialog>
+        </div>
+      </div>
+    </section>
   )
 }
-
-export default StorePage

@@ -5,7 +5,7 @@
 import { compile } from '@tailwindcss/node'
 import { Scanner } from '@tailwindcss/oxide'
 import { build } from 'esbuild'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -21,8 +21,62 @@ const out = resolve(root, 'bot-store/dist/hermes-bots-plus/plugin.js')
 // 我们的替换文件再通过 @official-bots/<名字> 拿到官方原版。
 const OVERRIDES = ['roster-pane-toolbar', 'bot-row']
 
+// @hermes/plugin-sdk 已经原样导出的主程序模块：当复用的原生 Capabilities 组件通过 @/ 引用它们时，
+// 直接映射回外部的 @hermes/plugin-sdk，避免把 i18n Context、QueryClient、Dialog/Popover Portal 等
+// 带全局状态的模块复制一份未初始化的副本打进 plugin.js。
+const SDK_REEXPORTS = new Set([
+  '@/app/overlays/panel',
+  '@/app/settings/primitives',
+  '@/app/settings/toolset-config-panel',
+  '@/components/status-dot',
+  '@/components/ui/badge',
+  '@/components/ui/button',
+  '@/components/ui/checkbox',
+  '@/components/ui/codicon',
+  '@/components/ui/color-swatches',
+  '@/components/ui/confirm-dialog',
+  '@/components/ui/context-menu',
+  '@/components/ui/copy-button',
+  '@/components/ui/decode-text',
+  '@/components/ui/dialog',
+  '@/components/ui/disclosure-caret',
+  '@/components/ui/dropdown-menu',
+  '@/components/ui/empty-state',
+  '@/components/ui/error-state',
+  '@/components/ui/fade-scroll',
+  '@/components/ui/glyph-spinner',
+  '@/components/ui/input',
+  '@/components/ui/kbd',
+  '@/components/ui/loader',
+  '@/components/ui/log-view',
+  '@/components/ui/popover',
+  '@/components/ui/row-button',
+  '@/components/ui/sandboxed-frame',
+  '@/components/ui/scroll-area',
+  '@/components/ui/search-field',
+  '@/components/ui/segmented-control',
+  '@/components/ui/select',
+  '@/components/ui/separator',
+  '@/components/ui/skeleton',
+  '@/components/ui/switch',
+  '@/components/ui/tabs',
+  '@/components/ui/textarea',
+  '@/components/ui/tooltip',
+  '@/i18n',
+  '@/lib/clipboard',
+  '@/lib/query-client',
+  '@/lib/time',
+  '@/lib/utils',
+  '@/themes/color',
+  '@/themes/context',
+  '@/themes/request',
+  '@/themes/retint'
+])
+
 const findSource = base =>
-  ['.tsx', '.ts', '/index.tsx', '/index.ts'].map(ext => base + ext).find(existsSync)
+  ['', '.tsx', '.ts', '/index.tsx', '/index.ts', '.json']
+    .map(ext => base + ext)
+    .find(p => statSync(p, { throwIfNoEntry: false })?.isFile())
 
 // 运行时插件不会触发主程序重新生成 Tailwind 样式：主程序没用过的类在插件里无效。
 // 所以构建时只扫描我们自己的文件，按主程序的主题生成这些类的 CSS，运行时注入页面。
@@ -45,6 +99,42 @@ const overlay = {
       const path = findSource(resolve(official, args.path.slice('@official-bots/'.length)))
 
       return path ? { path } : { errors: [{ text: `找不到官方模块 ${args.path}` }] }
+    })
+
+    // 主程序已加载所有原生样式，插件包里将 .css 导入置空，不重复打包
+    b.onResolve({ filter: /\.css$/ }, () => ({ path: 'empty-css', namespace: 'empty-css' }))
+    b.onLoad({ filter: /.*/, namespace: 'empty-css' }, () => ({ contents: '', loader: 'js' }))
+
+    // @/<path> → SDK 已导出的直接转 @hermes/plugin-sdk（外部模块，共享宿主实例）；其余解析到 apps/desktop/src/
+    b.onResolve({ filter: /^@\// }, args => {
+      if (SDK_REEXPORTS.has(args.path)) {
+        return { path: '@hermes/plugin-sdk', external: true }
+      }
+
+      const path = findSource(resolve(desktop, 'src', args.path.slice(2)))
+
+      return path ? { path, sideEffects: false } : { errors: [{ text: `找不到主程序模块 ${args.path}` }] }
+    })
+
+    // 原生模块内部的相对 import（如 primitives.tsx 里的 '../overlays/panel'），若目标已由 SDK 导出，同样转给 SDK
+    b.onResolve({ filter: /^\.\.?\// }, args => {
+      if (!args.importer.startsWith(resolve(desktop, 'src')) || args.importer.startsWith(official)) {
+        return undefined
+      }
+
+      const target = findSource(resolve(dirname(args.importer), args.path))
+
+      if (!target) {
+        return undefined
+      }
+
+      const rel = '@/' + target.slice(resolve(desktop, 'src').length + 1).replaceAll('\\', '/').replace(/\.(tsx?|js)$/, '').replace(/\/index$/, '')
+
+      if (SDK_REEXPORTS.has(rel)) {
+        return { path: '@hermes/plugin-sdk', external: true }
+      }
+
+      return { path: target, sideEffects: false }
     })
 
     // 构建时生成的样式，作为虚拟模块给 inject-css.ts 用
@@ -105,6 +195,8 @@ await build({
   target: 'es2022',
   absWorkingDir: desktop,
   nodePaths: [resolve(desktop, 'node_modules'), resolve(root, 'node_modules')],
+  banner: { js: 'const __emptyGlob = () => ({});' },
+  define: { 'import.meta.glob': '__emptyGlob' },
   external: ['@hermes/plugin-sdk', 'react', 'react/jsx-runtime', 'react/jsx-dev-runtime', 'react-dom'],
   plugins: [overlay],
   logLevel: 'info'
