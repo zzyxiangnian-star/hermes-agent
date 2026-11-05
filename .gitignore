@@ -332,3 +332,6 @@ native/fts5_cjk/*.so
 /pm/.lock.json.lock
 
 apps/desktop/.dist-build*
+
+# impeccable skill 的本地引擎二进制（首次运行时自动下载，不入库）
+.claude/skills/impeccable/scripts/bin/
