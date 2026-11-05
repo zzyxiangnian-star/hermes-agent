@@ -1,6 +1,6 @@
 import { parse } from 'yaml'
 
-import type { StoreBot, StoreCategory, StoreRequirement } from './store-types'
+import type { StoreBot, StoreCategory, StoreMcpServer, StoreRequirement } from './store-types'
 
 const ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/
 // git 地址，或本机目录（自己调试配方时用）
@@ -37,8 +37,8 @@ function toItem(raw: unknown): null | StoreBot {
   const repo = String(r.repo || '').trim()
   const category: StoreCategory = r.category === 'kit' ? 'kit' : 'general'
 
-  // 套装可以没有自己的仓库（只是若干 Bot 的组合）；单个 Bot 必须有合法仓库地址
-  if (!ID_RE.test(id) || (category === 'general' && !REPO_RE.test(repo))) {
+  // 仓库地址可选（预设直接写在目录里），写了就必须合法
+  if (!ID_RE.test(id) || (repo && !REPO_RE.test(repo))) {
     return null
   }
 
@@ -48,11 +48,39 @@ function toItem(raw: unknown): null | StoreBot {
     category,
     summary: String(r.summary || ''),
     description: r.description ? String(r.description) : undefined,
-    repo,
+    repo: repo || undefined,
     icon: r.icon ? String(r.icon) : undefined,
     tags: Array.isArray(r.tags) ? r.tags.map(String) : [],
     requires: Array.isArray(r.requires) ? r.requires.map(toRequirement).filter(Boolean) as StoreRequirement[] : [],
-    bots: Array.isArray(r.bots) ? r.bots.map(String) : undefined
+    bots: Array.isArray(r.bots) ? r.bots.map(String) : undefined,
+    soul: typeof r.soul === 'string' ? r.soul : undefined,
+    toolsets: strings(r.toolsets),
+    skills: strings(r.skills),
+    mcp: Array.isArray(r.mcp) ? (r.mcp.map(toMcp).filter(Boolean) as StoreMcpServer[]) : undefined,
+    color: typeof r.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(r.color) ? r.color : undefined
+  }
+}
+
+function strings(raw: unknown): string[] | undefined {
+  return Array.isArray(raw) ? raw.map(String).filter(s => /^[\w./:@-]{1,128}$/.test(s)) : undefined
+}
+
+function toMcp(raw: unknown): null | StoreMcpServer {
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+
+  const r = raw as Record<string, unknown>
+  const name = String(r.name || '').trim()
+
+  if (!/^[\w-]{1,64}$/.test(name) || (!r.preset && !r.config)) {
+    return null
+  }
+
+  return {
+    name,
+    preset: r.preset ? String(r.preset) : undefined,
+    config: r.config && typeof r.config === 'object' ? (r.config as Record<string, unknown>) : undefined
   }
 }
 

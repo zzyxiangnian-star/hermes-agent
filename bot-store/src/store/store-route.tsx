@@ -1,14 +1,14 @@
-// 商店页面的“容器”：读目录、查依赖、安装、判断已安装、打开 Bot。
-// 界面本身在 StorePage（G03 交回后替换为 Gemini 做的版本，props 不变）。
-import { queryClient } from '@hermes/plugin-sdk'
+// 商店页面的“容器”：读目录、判断已添加、点“添加”时排队打开官方“新建机器人”窗口（预填好）。
+// 界面本身在 StorePage（G03 Gemini 做的版本）。
+import { useValue } from '@hermes/plugin-sdk'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { ROSTER_KEY, saveBotMeta, useRoster } from '@official-bots/data'
+import { saveBotMeta, useRoster } from '@official-bots/data'
 import { openRosterBot } from '@official-bots/roster-actions'
 
+import { $presetQueue, queuePresets } from '../preset/queue'
 import { fetchCatalog } from './catalog'
 import { catalogUrl } from './constants'
-import { checkRequirements, installBot, updateBot } from './install'
 import { StorePage } from './StorePage'
 import type { InstallState, StoreBot } from './store-types'
 
@@ -16,8 +16,8 @@ export function StoreRoute() {
   const [items, setItems] = useState<StoreBot[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string>()
-  const [states, setStates] = useState<Record<string, InstallState>>({})
   const roster = useRoster()
+  const queue = useValue($presetQueue)
 
   const installed = useMemo(() => {
     const list = roster.data?.profiles || []
@@ -30,14 +30,10 @@ export function StoreRoute() {
     setLoadError(undefined)
 
     try {
-      const catalog = await fetchCatalog(catalogUrl())
-      setItems(catalog)
-      setLoading(false)
-      // 依赖检查较慢，列表先出来，检查结果到了再补上
-      const checked = await Promise.all(catalog.map(async item => ({ ...item, requires: await checkRequirements(item.requires) })))
-      setItems(checked)
+      setItems(await fetchCatalog(catalogUrl()))
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : String(error))
+    } finally {
       setLoading(false)
     }
   }, [])
@@ -46,7 +42,7 @@ export function StoreRoute() {
     void load()
   }, [load])
 
-  // 以前装的 Bot 没有中文标题（侧栏显示 bot-dev 这类名字）：打开商店时补上一次。
+  // 早期用配方装的 Bot 没有中文标题（侧栏显示 bot-dev 这类名字）：打开商店时补上一次。
   useEffect(() => {
     for (const item of items) {
       const bot = installed.get(item.id)
@@ -61,46 +57,35 @@ export function StoreRoute() {
   const installState = useCallback(
     (id: string): InstallState => {
       const item = items.find(i => i.id === id)
+      const one = (botId: string): InstallState =>
+        installed.has(botId)
+          ? { kind: 'installed' }
+          : queue.some(q => q.id === botId)
+            ? { kind: 'installing' }
+            : { kind: 'idle' }
 
-      // 套装：看里面每个 Bot 的状态——有一个在装就是“安装中”，全部装好才算“已安装”
+      // 套装：里面的 Bot 全部添加了才算已添加
       if (item?.category === 'kit') {
-        const parts = (item.bots || []).map(bot => states[bot] || (installed.has(bot) ? { kind: 'installed' } : { kind: 'idle' }))
+        const parts = (item.bots || []).map(one)
 
         return (
-          parts.find(p => p.kind === 'installing' || p.kind === 'error') ||
+          parts.find(p => p.kind === 'installing') ||
           (parts.length && parts.every(p => p.kind === 'installed') ? { kind: 'installed' } : { kind: 'idle' })
-        ) as InstallState
+        )
       }
 
-      return states[id] || (installed.has(id) ? { kind: 'installed' } : { kind: 'idle' })
+      return one(id)
     },
-    [installed, items, states]
+    [installed, items, queue]
   )
 
-  const onInstall = useCallback(async (item: StoreBot) => {
-    const targets = item.category === 'kit' ? items.filter(i => item.bots?.includes(i.id)) : [item]
-
-    for (const target of targets) {
-      if (installed.has(target.id)) {
-        continue
-      }
-
-      setStates(s => ({ ...s, [target.id]: { kind: 'installing' } }))
-
-      try {
-        await installBot(target)
-        // 侧栏默认显示 profile 名（如 bot-dev），装好后把标题设成商店里的中文名。
-        await saveBotMeta(target.id, { title: target.name, created: Date.now() }).catch(() => undefined)
-        await queryClient.invalidateQueries({ queryKey: ROSTER_KEY })
-        setStates(s => ({ ...s, [target.id]: { kind: 'installed' } }))
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        setStates(s => ({ ...s, [target.id]: { kind: 'error', message } }))
-
-        return
-      }
-    }
-  }, [installed, items])
+  const onInstall = useCallback(
+    (item: StoreBot) => {
+      const targets = item.category === 'kit' ? items.filter(i => item.bots?.includes(i.id)) : [item]
+      queuePresets(targets.filter(t => !installed.has(t.id) && !$presetQueue.get().some(q => q.id === t.id)))
+    },
+    [installed, items]
+  )
 
   const onOpenBot = useCallback(
     (id: string) => {
@@ -115,23 +100,15 @@ export function StoreRoute() {
     [installed, items]
   )
 
-  const onUpdate = useCallback(async (item: StoreBot, forceConfig: boolean) => {
-    const message = await updateBot(item.id, forceConfig)
-    await queryClient.invalidateQueries({ queryKey: ROSTER_KEY })
-
-    return message
-  }, [])
-
   return (
     <StorePage
       installState={installState}
       items={items}
       loadError={loadError}
       loading={loading}
-      onInstall={item => void onInstall(item)}
+      onInstall={onInstall}
       onOpenBot={onOpenBot}
       onRetryLoad={() => void load()}
-      onUpdate={onUpdate}
     />
   )
 }

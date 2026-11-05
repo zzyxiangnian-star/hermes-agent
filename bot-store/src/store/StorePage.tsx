@@ -136,8 +136,8 @@ function CardActionButton({
       size="xs"
       variant="default"
     >
-      <Codicon name="cloud-download" size="0.75rem" />
-      安装
+      <Codicon name="add" size="0.75rem" />
+      添加
     </Button>
   )
 }
@@ -335,7 +335,7 @@ function StoreDetailDrawer({
     if (!activeItem) return
     try {
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(activeItem.repo)
+        await navigator.clipboard.writeText(activeItem.repo || '')
       }
       setCopied(true)
       if (copyTimerRef.current !== undefined) {
@@ -572,7 +572,33 @@ function StoreDetailDrawer({
                 )}
               </section>
 
+              {/* 预设内容：创建后自动套用 */}
+              {[
+                ['工具集', activeItem.toolsets],
+                ['技能', activeItem.skills],
+                ['MCP', activeItem.mcp?.map(m => m.name)]
+              ].map(([label, list]) =>
+                (list as string[] | undefined)?.length ? (
+                  <section className="space-y-1.5" key={label as string}>
+                    <h4 className="text-[0.6875rem] font-semibold uppercase tracking-wider text-(--ui-text-quaternary)">
+                      {label as string}
+                    </h4>
+                    <div className="flex flex-wrap gap-1">
+                      {(list as string[]).map(name => (
+                        <span
+                          className="rounded border border-(--ui-stroke-secondary) bg-(--ui-bg-quinary) px-1.5 py-0.5 font-mono text-[0.6875rem] text-(--ui-text-secondary)"
+                          key={name}
+                        >
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  </section>
+                ) : null
+              )}
+
               {/* Repository Link */}
+              {activeItem.repo ? (
               <section className="space-y-1.5">
                 <h4 className="text-[0.6875rem] font-semibold uppercase tracking-wider text-(--ui-text-quaternary)">
                   仓库地址
@@ -599,6 +625,7 @@ function StoreDetailDrawer({
                   </Button>
                 </div>
               </section>
+              ) : null}
 
               {/* Install Error Detail inside Drawer */}
               {activeState.kind === 'error' && (
@@ -629,7 +656,7 @@ function StoreDetailDrawer({
                   </div>
                 ) : (
                   <span className="text-[0.6875rem] text-(--ui-text-quaternary)">
-                    从 GitHub 拉取配方安装，记忆和对话保存在本机
+                    打开新建窗口，替你填好人格、工具集、技能和 MCP；默认沿用 default 的模型和 Key
                   </span>
                 )}
               </div>
