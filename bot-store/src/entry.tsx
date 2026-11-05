@@ -9,6 +9,8 @@ import { registerStore } from './store/register'
 
 export default {
   ...official,
+  // 名字和内置的“Bots”区分开，否则插件页里两个都叫 Bots，搜不到也分不清。
+  name: 'Bots 改造版',
   description: 'Bot 模式（个人改造版）：官方 Bot 模式 + Bot 商店 + 每个 Bot 多个对话。',
   register(ctx: PluginContext) {
     official.register(ctx)

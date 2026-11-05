@@ -3,7 +3,7 @@
 import { queryClient } from '@hermes/plugin-sdk'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { ROSTER_KEY, useRoster } from '@official-bots/data'
+import { ROSTER_KEY, saveBotMeta, useRoster } from '@official-bots/data'
 import { openRosterBot } from '@official-bots/roster-actions'
 
 import { fetchCatalog } from './catalog'
@@ -46,6 +46,18 @@ export function StoreRoute() {
     void load()
   }, [load])
 
+  // 以前装的 Bot 没有中文标题（侧栏显示 bot-dev 这类名字）：打开商店时补上一次。
+  useEffect(() => {
+    for (const item of items) {
+      const bot = installed.get(item.id)
+      const title = bot?.ui_meta?.['hermes-bots']?.title || (typeof bot?.title === 'string' ? bot.title : '')
+
+      if (bot && item.category !== 'kit' && !String(title).trim()) {
+        void saveBotMeta(item.id, { title: item.name }).catch(() => undefined)
+      }
+    }
+  }, [installed, items])
+
   const installState = useCallback(
     (id: string): InstallState => {
       const item = items.find(i => i.id === id)
@@ -77,6 +89,8 @@ export function StoreRoute() {
 
       try {
         await installBot(target)
+        // 侧栏默认显示 profile 名（如 bot-dev），装好后把标题设成商店里的中文名。
+        await saveBotMeta(target.id, { title: target.name, created: Date.now() }).catch(() => undefined)
         await queryClient.invalidateQueries({ queryKey: ROSTER_KEY })
         setStates(s => ({ ...s, [target.id]: { kind: 'installed' } }))
       } catch (error) {
