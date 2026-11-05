@@ -4,6 +4,7 @@ import type { PluginContext } from '@hermes/plugin-sdk'
 
 import official from '@official-bots/plugin'
 
+import { injectPluginCss } from './inject-css'
 import { registerStore } from './store/register'
 
 export default {
@@ -11,6 +12,7 @@ export default {
   description: 'Bot 模式（个人改造版）：官方 Bot 模式 + Bot 商店 + 每个 Bot 多个对话。',
   register(ctx: PluginContext) {
     official.register(ctx)
+    injectPluginCss(ctx)
     registerStore(ctx)
   }
 }

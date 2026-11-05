@@ -2,6 +2,8 @@
 // 输出：bot-store/dist/hermes-bots-plus/plugin.js
 // 用法（仓库根目录 npm install 之后）：node bot-store/build-bots-plus.mjs
 // 外部插件只允许 import @hermes/plugin-sdk 和 react*，其余依赖（nanostores、yaml、noVNC）打进包里。
+import { compile } from '@tailwindcss/node'
+import { Scanner } from '@tailwindcss/oxide'
 import { build } from 'esbuild'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -20,6 +22,19 @@ const OVERRIDES = ['roster-pane-toolbar', 'bot-row']
 const findSource = base =>
   ['.tsx', '.ts', '/index.tsx', '/index.ts'].map(ext => base + ext).find(existsSync)
 
+// 运行时插件不会触发主程序重新生成 Tailwind 样式：主程序没用过的类在插件里无效。
+// 所以构建时只扫描我们自己的文件，按主程序的主题生成这些类的 CSS，运行时注入页面。
+async function buildPluginCss() {
+  const styles = resolve(desktop, 'src/styles.css').replaceAll('\\', '/')
+  const input = `@reference "${styles}";\n@import "tailwindcss/utilities.css" layer(utilities);\n`
+  const compiler = await compile(input, { base: resolve(desktop, 'src'), onDependency() {} })
+  const scanner = new Scanner({ sources: [{ base: ours, pattern: '**/*.{ts,tsx}', negated: false }] })
+
+  return compiler.build(scanner.scan())
+}
+
+const pluginCss = await buildPluginCss()
+
 const overlay = {
   name: 'bots-plus-overlay',
   setup(b) {
@@ -29,6 +44,13 @@ const overlay = {
 
       return path ? { path } : { errors: [{ text: `找不到官方模块 ${args.path}` }] }
     })
+
+    // 构建时生成的样式，作为虚拟模块给 inject-css.ts 用
+    b.onResolve({ filter: /^virtual:bots-plus-css$/ }, () => ({ path: 'bots-plus-css', namespace: 'virtual' }))
+    b.onLoad({ filter: /.*/, namespace: 'virtual' }, () => ({
+      contents: `export default ${JSON.stringify(pluginCss)}`,
+      loader: 'js'
+    }))
 
     // 官方文件之间的相对 import，命中替换表时改指向我们的版本
     b.onResolve({ filter: /^\.\// }, args => {
