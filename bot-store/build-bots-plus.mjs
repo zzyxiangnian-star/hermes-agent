@@ -15,7 +15,7 @@ const out = resolve(root, 'bot-store/dist/hermes-bots-plus/plugin.js')
 
 // 官方模块里要被我们版本替换的文件：官方文件 import './<名字>' 时改指向 bot-store/src/<名字>.tsx。
 // 我们的替换文件再通过 @official-bots/<名字> 拿到官方原版。
-const OVERRIDES = ['roster-pane-toolbar']
+const OVERRIDES = ['roster-pane-toolbar', 'bot-row']
 
 const findSource = base =>
   ['.tsx', '.ts', '/index.tsx', '/index.ts'].map(ext => base + ext).find(existsSync)

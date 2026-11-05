@@ -18,7 +18,7 @@ export function StorePage({ items, loading, loadError, installState, onInstall, 
         </div>
       ) : null}
 
-      <div className="mt-5 grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3">
+      <div className="mt-5 grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
         {loading
           ? [0, 1, 2].map(i => <Skeleton className="h-28 rounded-lg" key={i} />)
           : items.map(item => (
