@@ -27,4 +27,6 @@ export interface StorePageProps {
   onInstall: (item: StoreBot) => void
   onOpenBot: (id: string) => void
   onRetryLoad: () => void
+  /** 更新已安装的 Bot（hermes profile update）。forceConfig 为 true 时连 config.yaml 一起换成新版。 */
+  onUpdate?: (item: StoreBot, forceConfig: boolean) => Promise<string>
 }

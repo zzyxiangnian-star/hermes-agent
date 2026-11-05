@@ -23,6 +23,51 @@ function hasMissingReq(requires?: StoreRequirement[]): boolean {
   return Boolean(requires?.some(req => req.ok === false))
 }
 
+/** 更新已安装的 Bot。默认保留本机 config.yaml（可能改过模型）；按住 Shift 点或点“含配置”会连配置一起更新。 */
+function UpdateButton({ item, onUpdate }: { item: StoreBot; onUpdate: NonNullable<StorePageProps['onUpdate']> }) {
+  const [state, setState] = useState<{ kind: 'idle' | 'busy' | 'done' | 'error'; message?: string }>({ kind: 'idle' })
+
+  const run = async (forceConfig: boolean) => {
+    setState({ kind: 'busy' })
+
+    try {
+      const message = await onUpdate(item, forceConfig)
+      setState({ kind: 'done', message })
+    } catch (error) {
+      setState({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
+  const label =
+    state.kind === 'done'
+      ? state.message || '已是最新'
+      : state.kind === 'error'
+        ? state.message || '更新失败'
+        : '从配方仓库拉取新版（记忆、对话、.env 不动）。按住 Shift 点击会连 config.yaml 一起更新，你改过的模型设置会被覆盖。'
+
+  return (
+    <Tip label={label}>
+      <Button
+        disabled={state.kind === 'busy'}
+        onClick={event => {
+          event.stopPropagation()
+          void run(event.shiftKey)
+        }}
+        size="xs"
+        variant="ghost"
+      >
+        <Codicon
+          className={cn(state.kind === 'error' && 'text-(--ui-warning)', state.kind === 'done' && 'text-(--ui-success)')}
+          name={state.kind === 'busy' ? 'loading' : state.kind === 'done' ? 'check' : state.kind === 'error' ? 'warning' : 'sync'}
+          size="0.75rem"
+          spinning={state.kind === 'busy'}
+        />
+        {state.kind === 'busy' ? '更新中' : state.kind === 'done' ? '已更新' : '更新'}
+      </Button>
+    </Tip>
+  )
+}
+
 function CardActionButton({
   item,
   state,
@@ -232,8 +277,10 @@ function StoreDetailDrawer({
   onInstall,
   onOpenBot,
   onSelectBot,
-  onBackToKit
+  onBackToKit,
+  onUpdate
 }: {
+  onUpdate?: StorePageProps['onUpdate']
   item: StoreBot | null
   parentKit: StoreBot | null
   allItems: StoreBot[]
@@ -582,12 +629,15 @@ function StoreDetailDrawer({
                   </div>
                 ) : (
                   <span className="text-[0.6875rem] text-(--ui-text-quaternary)">
-                    依赖检查通过，可直接安装
+                    从 GitHub 拉取配方安装，记忆和对话保存在本机
                   </span>
                 )}
               </div>
 
-              <div className="shrink-0">
+              <div className="flex shrink-0 items-center gap-1.5">
+                {onUpdate && activeState.kind === 'installed' && activeItem.category === 'general' ? (
+                  <UpdateButton item={activeItem} key={activeItem.id} onUpdate={onUpdate} />
+                ) : null}
                 <CardActionButton
                   item={activeItem}
                   onInstall={onInstall}
@@ -610,7 +660,8 @@ export function StorePage({
   installState,
   onInstall,
   onOpenBot,
-  onRetryLoad
+  onRetryLoad,
+  onUpdate
 }: StorePageProps) {
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<CategoryTab>('all')
@@ -813,6 +864,7 @@ export function StorePage({
           setParentKitId(null)
         }}
         onInstall={onInstall}
+        onUpdate={onUpdate}
         onOpenBot={onOpenBot}
         onSelectBot={(bot, fromKit) => {
           setParentKitId(fromKit.id)

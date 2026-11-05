@@ -48,3 +48,18 @@ export async function checkRequirements(reqs: StoreRequirement[] = []): Promise<
 function lastLines(text: string, n = 6) {
   return text.trim().split(/\r?\n/).slice(-n).join('\n')
 }
+
+/** 更新已安装的 Bot：hermes profile update <id> --yes [--force-config]。
+ *  默认保留本机 config.yaml（用户可能改过模型），记忆、对话、.env 永远不动。 */
+export async function updateBot(id: string, forceConfig = false): Promise<string> {
+  const argv = ['profile', 'update', id, '--yes', ...(forceConfig ? ['--force-config'] : [])]
+  const result = await hermesCli(argv)
+
+  if (result.code !== 0) {
+    throw new Error(lastLines(result.output || '更新失败（无输出）'))
+  }
+
+  const version = /→ v(\S+)/.exec(result.output || '')?.[1]
+
+  return version ? `已更新到 v${version}` : '已更新'
+}

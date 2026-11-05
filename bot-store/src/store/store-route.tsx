@@ -8,7 +8,7 @@ import { openRosterBot } from '@official-bots/roster-actions'
 
 import { fetchCatalog } from './catalog'
 import { catalogUrl } from './constants'
-import { checkRequirements, installBot } from './install'
+import { checkRequirements, installBot, updateBot } from './install'
 import { StorePage } from './StorePage'
 import type { InstallState, StoreBot } from './store-types'
 
@@ -47,8 +47,22 @@ export function StoreRoute() {
   }, [load])
 
   const installState = useCallback(
-    (id: string): InstallState => states[id] || (installed.has(id) ? { kind: 'installed' } : { kind: 'idle' }),
-    [installed, states]
+    (id: string): InstallState => {
+      const item = items.find(i => i.id === id)
+
+      // 套装：看里面每个 Bot 的状态——有一个在装就是“安装中”，全部装好才算“已安装”
+      if (item?.category === 'kit') {
+        const parts = (item.bots || []).map(bot => states[bot] || (installed.has(bot) ? { kind: 'installed' } : { kind: 'idle' }))
+
+        return (
+          parts.find(p => p.kind === 'installing' || p.kind === 'error') ||
+          (parts.length && parts.every(p => p.kind === 'installed') ? { kind: 'installed' } : { kind: 'idle' })
+        ) as InstallState
+      }
+
+      return states[id] || (installed.has(id) ? { kind: 'installed' } : { kind: 'idle' })
+    },
+    [installed, items, states]
   )
 
   const onInstall = useCallback(async (item: StoreBot) => {
@@ -76,14 +90,23 @@ export function StoreRoute() {
 
   const onOpenBot = useCallback(
     (id: string) => {
-      const bot = installed.get(id)
+      // 套装没有自己的 Bot，打开它包含的第一个
+      const kit = items.find(i => i.id === id && i.category === 'kit')
+      const bot = installed.get(kit?.bots?.[0] ?? id)
 
       if (bot) {
         void openRosterBot(bot)
       }
     },
-    [installed]
+    [installed, items]
   )
+
+  const onUpdate = useCallback(async (item: StoreBot, forceConfig: boolean) => {
+    const message = await updateBot(item.id, forceConfig)
+    await queryClient.invalidateQueries({ queryKey: ROSTER_KEY })
+
+    return message
+  }, [])
 
   return (
     <StorePage
@@ -94,6 +117,7 @@ export function StoreRoute() {
       onInstall={item => void onInstall(item)}
       onOpenBot={onOpenBot}
       onRetryLoad={() => void load()}
+      onUpdate={onUpdate}
     />
   )
 }
