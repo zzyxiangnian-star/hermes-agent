@@ -9,6 +9,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { applyTextPatch, patchCreateDialog, TEXT_PATCHES } from './patches.mjs'
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const desktop = resolve(root, 'apps/desktop')
 const official = resolve(desktop, 'src/plugins/hermes-bots')
@@ -76,19 +78,11 @@ const overlay = {
 
     // 官方代码里有两处把 'hermes-bots' 写死了（没用 ID 常量）：文案查找和花名册缓存键。
     // 改了 ID 后不跟着换，新建窗口等处会显示 bot.newTitle 这类原始键名。
-    for (const [file, from, to] of [
-      ['i18n.ts', "usePluginI18n('hermes-bots')", "usePluginI18n('hermes-bots-plus')"],
-      ['profile-ops.ts', "queryKey: ['hermes-bots', 'roster']", "queryKey: ['hermes-bots-plus', 'roster']"]
-    ]) {
-      b.onLoad({ filter: new RegExp(`plugins[\\\\/]hermes-bots[\\\\/]${file.replace('.', '\\.')}$`) }, args => {
-        const src = readFileSync(args.path, 'utf8')
-
-        if (!src.includes(from)) {
-          throw new Error(`${file} 里找不到：${from}（官方代码变了，检查补丁）`)
-        }
-
-        return { contents: src.split(from).join(to), loader: 'ts' }
-      })
+    for (const [file, from, to] of TEXT_PATCHES) {
+      b.onLoad({ filter: new RegExp(`plugins[\\\\/]hermes-bots[\\\\/]${file.replace('.', '\\.')}$`) }, args => ({
+        contents: applyTextPatch(readFileSync(args.path, 'utf8'), from, to, file),
+        loader: 'ts'
+      }))
     }
 
     // 只换插件 id，Bot 数据键 ui_meta['hermes-bots'] 不动，已有 Bot 照常显示
@@ -100,64 +94,6 @@ const overlay = {
       loader: 'ts'
     }))
   }
-}
-
-function insertAt(src, anchor, text, where = 'after') {
-  const i = src.indexOf(anchor)
-
-  if (i < 0 || src.indexOf(anchor, i + 1) >= 0) {
-    throw new Error(`create-dialog.tsx 补丁锚点没找到或不唯一：${anchor.trim().slice(0, 60)}`)
-  }
-
-  const at = where === 'after' ? i + anchor.length : i
-
-  return src.slice(0, at) + text + src.slice(at)
-}
-
-function patchCreateDialog(src) {
-  let out = insertAt(
-    src,
-    "import { useEffect, useRef, useState } from 'react'\n",
-    `import { $presetQueue as __bsQueue, shiftPreset as __bsShift } from ${JSON.stringify(resolve(ours, 'preset/queue'))}\n` +
-      `import { applyPreset as __bsApply } from ${JSON.stringify(resolve(ours, 'preset/apply'))}\n`
-  )
-  out = insertAt(
-    out,
-    "  const [advTab, setAdvTab] = useState('general')\n",
-    `  // [bots-plus] 商店预设：打开时预填，关闭时出队
-  const __bsPreset = useValue(__bsQueue)[0] || null
-  const __bsSeeded = useRef<null | string>(null)
-  useEffect(() => {
-    if (open && __bsPreset && __bsSeeded.current !== __bsPreset.id) {
-      __bsSeeded.current = __bsPreset.id
-      setName(__bsPreset.id)
-      setTitle(__bsPreset.name)
-      setDescription(__bsPreset.summary || '')
-      setSoul(__bsPreset.soul || '')
-      if (__bsPreset.color) setColor(__bsPreset.color)
-      setCloneFrom('default')
-      setAdvanced(true)
-    }
-    if (!open && __bsSeeded.current) {
-      __bsSeeded.current = null
-      __bsShift()
-    }
-  }, [open, __bsPreset])
-`
-  )
-  out = insertAt(
-    out,
-    '      // The intro turn is a real model call.',
-    `      // [bots-plus] 套用商店预设里的工具集、技能、MCP
-      if (__bsPreset && __bsSeeded.current === __bsPreset.id) {
-        await __bsApply(__bsPreset, slugCreated, requestForTarget)
-      }
-
-`,
-    'before'
-  )
-
-  return out
 }
 
 await build({
