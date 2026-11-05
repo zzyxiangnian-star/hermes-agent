@@ -5,11 +5,12 @@
 import { compile } from '@tailwindcss/node'
 import { Scanner } from '@tailwindcss/oxide'
 import { build } from 'esbuild'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { applyTextPatch, patchCreateDialog, TEXT_PATCHES } from './patches.mjs'
+import { SDK_REEXPORTS as SDK_REEXPORT_LIST } from './sdk-reexports.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const desktop = resolve(root, 'apps/desktop')
@@ -24,54 +25,7 @@ const OVERRIDES = ['roster-pane-toolbar', 'bot-row']
 // @hermes/plugin-sdk 已经原样导出的主程序模块：当复用的原生 Capabilities 组件通过 @/ 引用它们时，
 // 直接映射回外部的 @hermes/plugin-sdk，避免把 i18n Context、QueryClient、Dialog/Popover Portal 等
 // 带全局状态的模块复制一份未初始化的副本打进 plugin.js。
-const SDK_REEXPORTS = new Set([
-  '@/app/overlays/panel',
-  '@/app/settings/primitives',
-  '@/app/settings/toolset-config-panel',
-  '@/components/status-dot',
-  '@/components/ui/badge',
-  '@/components/ui/button',
-  '@/components/ui/checkbox',
-  '@/components/ui/codicon',
-  '@/components/ui/color-swatches',
-  '@/components/ui/confirm-dialog',
-  '@/components/ui/context-menu',
-  '@/components/ui/copy-button',
-  '@/components/ui/decode-text',
-  '@/components/ui/dialog',
-  '@/components/ui/disclosure-caret',
-  '@/components/ui/dropdown-menu',
-  '@/components/ui/empty-state',
-  '@/components/ui/error-state',
-  '@/components/ui/fade-scroll',
-  '@/components/ui/glyph-spinner',
-  '@/components/ui/input',
-  '@/components/ui/kbd',
-  '@/components/ui/loader',
-  '@/components/ui/log-view',
-  '@/components/ui/popover',
-  '@/components/ui/row-button',
-  '@/components/ui/sandboxed-frame',
-  '@/components/ui/scroll-area',
-  '@/components/ui/search-field',
-  '@/components/ui/segmented-control',
-  '@/components/ui/select',
-  '@/components/ui/separator',
-  '@/components/ui/skeleton',
-  '@/components/ui/switch',
-  '@/components/ui/tabs',
-  '@/components/ui/textarea',
-  '@/components/ui/tooltip',
-  '@/i18n',
-  '@/lib/clipboard',
-  '@/lib/query-client',
-  '@/lib/time',
-  '@/lib/utils',
-  '@/themes/color',
-  '@/themes/context',
-  '@/themes/request',
-  '@/themes/retint'
-])
+const SDK_REEXPORTS = new Set(SDK_REEXPORT_LIST)
 
 const findSource = base =>
   ['', '.tsx', '.ts', '/index.tsx', '/index.ts', '.json']

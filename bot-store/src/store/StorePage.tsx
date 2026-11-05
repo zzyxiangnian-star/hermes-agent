@@ -1,4 +1,4 @@
-// Bot 商店页面（HG06）：直接复用 Hermes 原生 Capabilities 组件（CapabilitySearch、CatalogFilterBar、CatalogSurface、CatalogDetailDialog）。
+// Bot 商店页面：搜索和详情用原生组件；列表自己按技能页的结构拼，不放 CatalogDeveloper。
 import {
   Badge,
   Button,
@@ -8,23 +8,24 @@ import {
   icons,
   Loader,
   PanelEmpty,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   RowButton,
-  SegmentedControl,
   Tip,
   useI18n
 } from '@hermes/plugin-sdk'
 import { useEffect, useMemo, useState } from 'react'
 
 import { syncCatalogArcs } from '@/app/capabilities/catalog/catalog-arc'
+import { CatalogCard, type CatalogCardVariant } from '@/app/capabilities/catalog/catalog-card'
 import { type CatalogEntry, catalogLabel } from '@/app/capabilities/catalog/catalog-data'
 import { CatalogDetailDialog } from '@/app/capabilities/catalog/catalog-detail-dialog'
-import { CatalogFilterBar } from '@/app/capabilities/catalog/catalog-filter-bar'
+import { CatalogFeaturedSlider } from '@/app/capabilities/catalog/catalog-featured-slider'
 import type { FacetRow } from '@/app/capabilities/catalog/catalog-filters'
 import { CatalogHeaderMeta, CatalogMetadata } from '@/app/capabilities/catalog/catalog-metadata'
 import { type CatalogFacets, EMPTY_FACETS } from '@/app/capabilities/catalog/catalog-query'
-import { CapabilityEmpty } from '@/app/capabilities/primitives'
 import { CapabilitySearch } from '@/app/capabilities/ui/capability-search'
-import { CatalogSurface, type CatalogSurfaceItem, type CatalogSurfaceSection } from '@/app/capabilities/ui/catalog-surface'
 
 import type { InstallState, StoreBot, StoreCategory, StorePageProps, StoreRequirement } from './store-types'
 
@@ -475,6 +476,102 @@ function StoreBotDetail({
   )
 }
 
+function StoreFilterBar({
+  categories,
+  tags,
+  facets,
+  sort,
+  onCategory,
+  onTag,
+  onSort,
+  onClear
+}: {
+  categories: ReadonlyArray<readonly [string, { label: string; count: number }]>
+  tags: FacetRow[]
+  facets: CatalogFacets
+  sort: StoreSort
+  onCategory: (value: string | null) => void
+  onTag: (value: string | null) => void
+  onSort: (value: StoreSort) => void
+  onClear: () => void
+}) {
+  const selected = facets.categories
+
+  return (
+    <div className="catalog-filter-bar" data-catalog-filters>
+      <div className="catalog-filter-row">
+        <div className="catalog-filter-chips">
+          <Button
+            aria-pressed={selected.length === 0}
+            onClick={() => onCategory(null)}
+            size="xs"
+            variant={selected.length === 0 ? 'default' : 'outline'}
+          >
+            全部
+          </Button>
+          <span aria-hidden className="px-1 text-(--ui-text-quaternary)">
+            /
+          </span>
+          {categories.map(([value, meta]) => (
+            <Button
+              aria-pressed={selected.includes(value)}
+              key={value}
+              onClick={() => onCategory(value)}
+              size="xs"
+              variant={selected.includes(value) ? 'default' : 'outline'}
+            >
+              {meta.label}
+            </Button>
+          ))}
+        </div>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button size="xs" variant={facets.tags.length > 0 ? 'default' : 'outline'}>
+              标签{facets.tags.length > 0 ? ` · ${facets.tags.length}` : ''}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-80 max-w-[calc(100vw-2rem)] p-4" variant="menu">
+            <div className="flex max-h-80 flex-col gap-4 overflow-y-auto">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-medium">标签</span>
+                <Button onClick={onClear} size="inline" variant="text">
+                  清除
+                </Button>
+              </div>
+              {tags.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {tags.map(row => (
+                    <Button
+                      aria-pressed={facets.tags.includes(row.value)}
+                      key={row.value}
+                      onClick={() => onTag(row.value)}
+                      size="xs"
+                      variant={facets.tags.includes(row.value) ? 'default' : 'outline'}
+                    >
+                      {row.label}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              <div className="flex flex-col gap-2">
+                <span className="text-xs text-(--ui-text-tertiary)">排序</span>
+                <div className="flex gap-1.5">
+                  <Button onClick={() => onSort('default')} size="xs" variant={sort === 'default' ? 'default' : 'outline'}>
+                    默认
+                  </Button>
+                  <Button onClick={() => onSort('name')} size="xs" variant={sort === 'name' ? 'default' : 'outline'}>
+                    名称
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
+      </div>
+    </div>
+  )
+}
+
 export function StorePage({
   items,
   loading,
@@ -485,7 +582,6 @@ export function StorePage({
   onRetryLoad,
   onUpdate
 }: StorePageProps) {
-  const { t } = useI18n()
   const [query, setQuery] = useState('')
   const [facets, setFacets] = useState<CatalogFacets>(EMPTY_FACETS)
   const [sort, setSort] = useState<StoreSort>('default')
@@ -501,8 +597,6 @@ export function StorePage({
       ] as const,
     [items]
   )
-
-  const sources = useMemo(() => ['official'], [])
 
   const tags = useMemo<FacetRow[]>(() => {
     const counts = new Map<string, number>()
@@ -572,46 +666,41 @@ export function StorePage({
     [items, selectedId]
   )
 
-  const toSurfaceItem = (item: StoreBot): CatalogSurfaceItem => ({
-    id: item.id,
-    name: item.name,
-    description: item.summary,
-    eyebrow: itemEyebrow(item),
-    badge: itemBadge(item),
-    action: (
-      <StoreActionButton
-        item={item}
-        onInstall={onInstall}
-        onOpenBot={onOpenBot}
-        onUpdate={onUpdate}
-        state={installState(item.id)}
-      />
-    ),
-    onOpen: () => setSelectedId(item.id)
-  })
+  const kits = filteredItems.filter(item => item.category === 'kit')
+  const generals = filteredItems.filter(item => item.category === 'general')
 
-  const sections = useMemo<CatalogSurfaceSection[]>(
-    () => [
-      {
-        id: 'kit',
-        label: CATEGORY_LABELS.kit,
-        blurb: '按业务场景组合好的多 Bot 协作套装，点添加会依次打开新建机器人窗口。',
-        layout: 'feature',
-        items: filteredItems.filter(item => item.category === 'kit').map(toSurfaceItem)
-      },
-      {
-        id: 'general',
-        label: CATEGORY_LABELS.general,
-        blurb: '开箱即用的单项能力 Bot，预置工具集、技能、MCP 服务与专属人格。',
-        layout: 'list',
-        items: filteredItems.filter(item => item.category === 'general').map(toSurfaceItem)
+  const renderCard = (item: StoreBot, index: number, variant: CatalogCardVariant) => (
+    <CatalogCard
+      accentIndex={index}
+      action={
+        <StoreActionButton
+          item={item}
+          onInstall={onInstall}
+          onOpenBot={onOpenBot}
+          onUpdate={onUpdate}
+          state={installState(item.id)}
+        />
       }
-    ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filteredItems, installState, onInstall, onOpenBot, onUpdate]
+      entry={entriesById.get(item.id) ?? toCatalogEntry(item)}
+      key={item.id}
+      onCategory={category => {
+        setFacets({ ...EMPTY_FACETS, categories: [category] })
+        setSelectedId(null)
+      }}
+      onOpen={() => setSelectedId(item.id)}
+      onSearch={value => {
+        setQuery(value)
+        setSelectedId(null)
+      }}
+      onTag={tag => {
+        setFacets({ ...EMPTY_FACETS, tags: [tag] })
+        setSelectedId(null)
+      }}
+      variant={variant}
+    />
   )
 
-  const toggleFacet = (field: 'categories' | 'sources' | 'tags', value: string | null) => {
+  const toggleFacet = (field: 'categories' | 'tags', value: string | null) => {
     setFacets(prev => {
       if (value === null) {
         return { ...prev, [field]: [] }
@@ -641,12 +730,6 @@ export function StorePage({
             </div>
           </div>
           <CapabilitySearch
-            actions={
-              <Button onClick={onRetryLoad} size="xs" variant="ghost">
-                <Codicon name="refresh" size="0.75rem" />
-                {t.skills.refresh}
-              </Button>
-            }
             hints={['网页爬取', '视频剪辑', '代码开发', '短视频运营']}
             onChange={setQuery}
             placeholder="搜索 Bot 名称、功能、标签或依赖…"
@@ -655,46 +738,31 @@ export function StorePage({
           />
         </header>
 
-        <CatalogFilterBar
-          actions={null}
+        <StoreFilterBar
           categories={categories}
           facets={facets}
-          kind="plugins"
           onCategory={value => toggleFacet('categories', value)}
           onClear={() => {
             setFacets(EMPTY_FACETS)
             setSort('default')
           }}
-          onInstalled={() => setFacets(prev => ({ ...prev, installedOnly: !prev.installedOnly }))}
-          onSource={value => toggleFacet('sources', value)}
+          onSort={setSort}
           onTag={value => toggleFacet('tags', value)}
-          resultCount={filteredItems.length}
-          sortControl={
-            <SegmentedControl
-              onChange={setSort}
-              options={[
-                { id: 'default', label: t.catalog.featured },
-                { id: 'name', label: t.catalog.alphabetical }
-              ]}
-              sizing="equal"
-              value={sort}
-            />
-          }
-          sources={sources}
+          sort={sort}
           tags={tags}
         />
 
         <div className="flex min-h-0 flex-1 flex-col" data-catalog-cards="plugins">
           {loading ? (
             <div className="flex flex-1 items-center justify-center">
-              <Loader label={t.skills.loading} type="lemniscate-bloom" />
+              <Loader label="正在加载" type="lemniscate-bloom" />
             </div>
           ) : loadError ? (
             <div className="flex flex-1">
               <PanelEmpty
                 action={
                   <Button onClick={onRetryLoad} size="sm">
-                    {t.skills.refresh}
+                    重新加载
                   </Button>
                 }
                 description={loadError}
@@ -703,9 +771,39 @@ export function StorePage({
               />
             </div>
           ) : filteredItems.length === 0 ? (
-            <CapabilityEmpty noun="bots" query={query} />
+            <div className="flex h-full min-h-0 flex-1">
+              <PanelEmpty
+                description={query.trim() ? `没有匹配「${query.trim()}」的内容。` : '换个词，或清掉筛选再看。'}
+                icon="search"
+                title="没有找到相关的 Bot"
+              />
+            </div>
           ) : (
-            <CatalogSurface kind="plugins" sections={sections} />
+            <div className="capabilities-scroll">
+              <div className="catalog-discovery">
+                {kits.length > 0 && (
+                  <section data-catalog-section="featured">
+                    <header className="catalog-section-heading">
+                      <h2>精选</h2>
+                    </header>
+                    <CatalogFeaturedSlider slides={kits.map((item, index) => renderCard(item, index, 'hero'))} />
+                  </section>
+                )}
+                {generals.length > 0 && (
+                  <section data-catalog-section="general">
+                    <header className="catalog-section-heading">
+                      <div>
+                        <h2>通用 Bot</h2>
+                        <p>开箱即用的单项能力 Bot，预置工具集、技能、MCP 服务与专属人格。</p>
+                      </div>
+                    </header>
+                    <div className="catalog-feature-row">
+                      {generals.map((item, index) => renderCard(item, index, 'compact'))}
+                    </div>
+                  </section>
+                )}
+              </div>
+            </div>
           )}
 
           <CatalogDetailDialog

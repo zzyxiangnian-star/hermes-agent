@@ -20,6 +20,6 @@ export default defineConfig({
   test: {
     name: 'bot-store',
     environment: 'node',
-    include: ['src/**/*.test.ts', 'patches.test.ts']
+    include: ['src/**/*.test.ts', 'patches.test.ts', 'sdk-map.test.ts']
   }
 })
