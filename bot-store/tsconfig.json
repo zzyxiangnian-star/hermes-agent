@@ -1,0 +1,43 @@
+{
+  "extends": "../apps/desktop/tsconfig.json",
+  "compilerOptions": {
+    "typeRoots": [
+      "../apps/desktop/node_modules/@types",
+      "../node_modules/@types"
+    ],
+    "paths": {
+      "@/*": [
+        "../apps/desktop/src/*"
+      ],
+      "@hermes/plugin-sdk": [
+        "../apps/desktop/src/sdk/index.ts"
+      ],
+      "@hermes/shared/ansi": [
+        "../apps/shared/src/ansi.ts"
+      ],
+      "@hermes/shared/billing": [
+        "../apps/shared/src/billing-types.ts"
+      ],
+      "@hermes/shared/color": [
+        "../apps/shared/src/color.ts"
+      ],
+      "@hermes/shared/i18n": [
+        "../apps/shared/src/i18n.ts"
+      ],
+      "@hermes/shared/translucency": [
+        "../apps/shared/src/translucency.ts"
+      ],
+      "@hermes/shared": [
+        "../apps/shared/src/index.ts"
+      ],
+      "@official-bots/*": [
+        "../apps/desktop/src/plugins/hermes-bots/*"
+      ]
+    }
+  },
+  "include": [
+    "src",
+    "../apps/desktop/src/global.d.ts",
+    "../apps/desktop/src/vite-env.d.ts"
+  ]
+}
