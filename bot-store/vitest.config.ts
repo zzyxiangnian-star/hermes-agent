@@ -14,6 +14,10 @@ export default defineConfig({
       {
         find: /^@official-bots\/(.*)$/,
         replacement: (_match, subpath: string) => resolve(officialBots, subpath)
+      },
+      {
+        find: /^@\/(.*)$/,
+        replacement: (_match, subpath: string) => resolve(desktopSrc, subpath)
       }
     ]
   },

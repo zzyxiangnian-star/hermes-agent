@@ -11,6 +11,23 @@ export const TEXT_PATCHES = [
   ['profile-ops.ts', "queryKey: ['hermes-bots', 'roster']", "queryKey: ['hermes-bots-plus', 'roster']"]
 ]
 
+// 原生重命名对话框没有成功回调。只在打包副本里、成功通知之后插一次刷新。
+export const SESSION_RENAME_ANCHOR = "      notify({ durationMs: 2_000, kind: 'success', message: r.renamed })\n"
+
+export function patchSessionActionsMenu(src) {
+  const found = src.indexOf(SESSION_RENAME_ANCHOR)
+
+  if (found < 0 || src.indexOf(SESSION_RENAME_ANCHOR, found + 1) >= 0) {
+    throw new Error('session-actions-menu.tsx 重命名成功锚点没找到或不唯一')
+  }
+
+  return (
+    src.slice(0, found + SESSION_RENAME_ANCHOR.length) +
+    '      globalThis.__hermesBotsPlusOnSessionRenamed?.()\n' +
+    src.slice(found + SESSION_RENAME_ANCHOR.length)
+  )
+}
+
 export function applyTextPatch(src, from, to, file) {
   if (!src.includes(from)) {
     throw new Error(`${file} 里找不到：${from}（官方代码变了，检查补丁）`)

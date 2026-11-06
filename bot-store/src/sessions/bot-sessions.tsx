@@ -1,5 +1,8 @@
 import * as sdk from '@hermes/plugin-sdk'
 import { cn, Codicon, haptic, host, type SessionListRow, Tip, useQuery } from '@hermes/plugin-sdk'
+import { useEffect } from 'react'
+
+import { SessionContextMenu } from '@/app/chat/sidebar/session-actions-menu'
 
 import { saveSelectedRosterBot } from '@official-bots/bot-state'
 import { CANONICAL_CHAT_TITLE, prepareBotSource, resolveExpectHistory } from '@official-bots/canonical-chat'
@@ -13,6 +16,8 @@ import {
   setBotsWorkspaceOwner
 } from '@official-bots/routing'
 import type { RosterRow } from '@official-bots/types'
+
+import { botSessionsQueryKey, deleteBotSession, holdBotSessionRefresh } from './session-menu'
 
 const LIST_LIMIT = 50
 
@@ -44,11 +49,13 @@ export function SessionsToggle({ open, onToggle }: { open: boolean; onToggle: ()
 /** 该 Bot 的会话列表：固定对话置顶，其余按时间倒序；底部“新对话”。 */
 export function BotSessions({ bot }: { bot: RosterRow }) {
   const query = useQuery({
-    queryKey: ['hermes-bots-plus', 'sessions', bot.name, botConnectionRoute(bot)?.connectionId || ''],
+    queryKey: botSessionsQueryKey(bot),
     queryFn: () => listBotSessions(bot),
     refetchInterval: 10_000,
     staleTime: 5_000
   })
+
+  useEffect(() => holdBotSessionRefresh(), [])
 
   const sessions = query.data || []
 
@@ -57,14 +64,27 @@ export function BotSessions({ bot }: { bot: RosterRow }) {
       <SessionLine icon="pinned" onClick={() => void openRosterBot(bot)} title="固定对话" />
       {query.isLoading ? <p className="px-2 py-1 text-[0.75rem] text-(--ui-text-quaternary)">加载中…</p> : null}
       {query.error ? <p className="px-2 py-1 text-[0.75rem] text-(--ui-warning)">读取对话失败</p> : null}
-      {sessions.map(row => (
-        <SessionLine
-          key={row.id}
-          meta={relativeTime(row.started_at)}
-          onClick={() => void openBotSession(bot, row)}
-          title={row.title || row.preview || '未命名对话'}
-        />
-      ))}
+      {sessions.map(row => {
+        const sessionId = row.session_id || row.id
+        const title = row.title || row.preview || '未命名对话'
+
+        return (
+          <SessionContextMenu
+            key={sessionId}
+            onDelete={() =>
+              deleteBotSession(bot, sessionId).catch(error => {
+                host.notifyError?.(error, '删除对话失败')
+              })
+            }
+            profile={bot.name}
+            sessionId={sessionId}
+            surface="row"
+            title={title}
+          >
+            <SessionLine meta={relativeTime(row.started_at)} onClick={() => void openBotSession(bot, row)} title={title} />
+          </SessionContextMenu>
+        )
+      })}
       <SessionLine
         icon="add"
         muted

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { applyTextPatch, CREATE_DIALOG_ANCHORS, patchCreateDialog, TEXT_PATCHES } from './patches.mjs'
+import { applyTextPatch, CREATE_DIALOG_ANCHORS, patchCreateDialog, patchSessionActionsMenu, SESSION_RENAME_ANCHOR, TEXT_PATCHES } from './patches.mjs'
 
 const official = resolve(dirname(fileURLToPath(import.meta.url)), '../apps/desktop/src/plugins/hermes-bots')
 
@@ -66,5 +66,22 @@ describe('official source patches', () => {
       expect(count(patched, to), file).toBe(times)
       expect(patched).not.toContain(from)
     }
+  })
+
+  it('inserts the session-list refresh only after a successful rename', () => {
+    const src = readFileSync(
+      resolve(official, '../../app/chat/sidebar/session-actions-menu.tsx'),
+      'utf8'
+    )
+
+    expect(count(src, SESSION_RENAME_ANCHOR)).toBe(1)
+
+    const patched = patchSessionActionsMenu(src)
+    const at = patched.indexOf(SESSION_RENAME_ANCHOR)
+
+    expect(patched.slice(at, at + SESSION_RENAME_ANCHOR.length + 60)).toContain(
+      'globalThis.__hermesBotsPlusOnSessionRenamed?.()'
+    )
+    expect(count(patched, 'globalThis.__hermesBotsPlusOnSessionRenamed?.()')).toBe(1)
   })
 })
