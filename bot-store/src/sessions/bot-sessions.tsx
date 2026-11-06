@@ -1,8 +1,5 @@
 import * as sdk from '@hermes/plugin-sdk'
 import { cn, Codicon, haptic, host, type SessionListRow, Tip, useQuery } from '@hermes/plugin-sdk'
-import { useEffect } from 'react'
-
-import { SessionContextMenu } from '@/app/chat/sidebar/session-actions-menu'
 
 import { saveSelectedRosterBot } from '@official-bots/bot-state'
 import { CANONICAL_CHAT_TITLE, prepareBotSource, resolveExpectHistory } from '@official-bots/canonical-chat'
@@ -17,7 +14,7 @@ import {
 } from '@official-bots/routing'
 import type { RosterRow } from '@official-bots/types'
 
-import { botSessionsQueryKey, deleteBotSession, holdBotSessionRefresh } from './session-menu'
+import { BotSessionMenu, botSessionsQueryKey } from './session-menu'
 
 const LIST_LIMIT = 50
 
@@ -55,8 +52,6 @@ export function BotSessions({ bot }: { bot: RosterRow }) {
     staleTime: 5_000
   })
 
-  useEffect(() => holdBotSessionRefresh(), [])
-
   const sessions = query.data || []
 
   return (
@@ -69,20 +64,9 @@ export function BotSessions({ bot }: { bot: RosterRow }) {
         const title = row.title || row.preview || '未命名对话'
 
         return (
-          <SessionContextMenu
-            key={sessionId}
-            onDelete={() =>
-              deleteBotSession(bot, sessionId).catch(error => {
-                host.notifyError?.(error, '删除对话失败')
-              })
-            }
-            profile={bot.name}
-            sessionId={sessionId}
-            surface="row"
-            title={title}
-          >
+          <BotSessionMenu bot={bot} key={sessionId} sessionId={sessionId} title={title}>
             <SessionLine meta={relativeTime(row.started_at)} onClick={() => void openBotSession(bot, row)} title={title} />
-          </SessionContextMenu>
+          </BotSessionMenu>
         )
       })}
       <SessionLine

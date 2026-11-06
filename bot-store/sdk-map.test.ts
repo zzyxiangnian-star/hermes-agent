@@ -4,14 +4,13 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { queryClientShim } from './query-client-shim.mjs'
-import { SDK_REEXPORTS, SDK_SHIMS } from './sdk-reexports.mjs'
+import { bundledStoreModules } from './bundle-guard.mjs'
+import { SDK_REEXPORTS } from './sdk-reexports.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repo = resolve(here, '..')
 const desktopSrc = resolve(repo, 'apps/desktop/src')
 const mapped = new Set(SDK_REEXPORTS)
-const shims = new Map(Object.entries(SDK_SHIMS))
 
 function listSources(dir: string): string[] {
   const out: string[] = []
@@ -177,20 +176,14 @@ function mappedImports(): Map<string, Set<string>> {
         continue
       }
 
-      if (id && (mapped.has(id) || shims.has(id))) {
-        const extras = new Set(shims.get(id) ?? [])
+      if (id && mapped.has(id)) {
         const bucket = byModule.get(id) ?? new Set<string>()
 
         for (const name of item.names) {
-          if (!extras.has(name)) {
-            bucket.add(name)
-          }
+          bucket.add(name)
         }
 
-        if (bucket.size > 0) {
-          byModule.set(id, bucket)
-        }
-
+        byModule.set(id, bucket)
         continue
       }
 
@@ -221,12 +214,11 @@ describe('SDK re-export map', () => {
     expect(missing).toEqual([])
   })
 
-  it('keeps the shared query client and fills in the profile invalidation the SDK does not export', () => {
-    const shim = queryClientShim()
-
-    expect(shim).toContain("export { queryClient } from '@hermes/plugin-sdk'")
-    expect(shim).toContain('export function invalidateProfileScopedQueries()')
-    expect(shim).toContain('"billing"')
-    expect(SDK_SHIMS['@/lib/query-client']).toContain('invalidateProfileScopedQueries')
+  it('treats a copied desktop store module comment as a bad bundle', () => {
+    expect(bundledStoreModules('// src/lib/utils.ts\n')).toEqual([])
+    expect(bundledStoreModules('// src/store/session.ts\n// src/store/gateway.ts\n')).toEqual([
+      '// src/store/session.ts',
+      '// src/store/gateway.ts'
+    ])
   })
 })

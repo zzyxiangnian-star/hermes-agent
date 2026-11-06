@@ -9,9 +9,9 @@ import { readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { applyTextPatch, patchCreateDialog, patchSessionActionsMenu, TEXT_PATCHES } from './patches.mjs'
-import { queryClientShim } from './query-client-shim.mjs'
-import { SDK_REEXPORTS as SDK_REEXPORT_LIST, SDK_SHIMS } from './sdk-reexports.mjs'
+import { assertNoBundledStores } from './bundle-guard.mjs'
+import { applyTextPatch, patchCreateDialog, TEXT_PATCHES } from './patches.mjs'
+import { SDK_REEXPORTS as SDK_REEXPORT_LIST } from './sdk-reexports.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const desktop = resolve(root, 'apps/desktop')
@@ -62,10 +62,6 @@ const overlay = {
 
     // @/<path> → SDK 已导出的直接转 @hermes/plugin-sdk（外部模块，共享宿主实例）；其余解析到 apps/desktop/src/
     b.onResolve({ filter: /^@\// }, args => {
-      if (Object.prototype.hasOwnProperty.call(SDK_SHIMS, args.path)) {
-        return { path: args.path, namespace: 'sdk-shim' }
-      }
-
       if (SDK_REEXPORTS.has(args.path)) {
         return { path: '@hermes/plugin-sdk', external: true }
       }
@@ -89,10 +85,6 @@ const overlay = {
 
       const rel = '@/' + target.slice(resolve(desktop, 'src').length + 1).replaceAll('\\', '/').replace(/\.(tsx?|js)$/, '').replace(/\/index$/, '')
 
-      if (Object.prototype.hasOwnProperty.call(SDK_SHIMS, rel)) {
-        return { path: rel, namespace: 'sdk-shim' }
-      }
-
       if (SDK_REEXPORTS.has(rel)) {
         return { path: '@hermes/plugin-sdk', external: true }
       }
@@ -102,14 +94,6 @@ const overlay = {
 
     // 构建时生成的样式，作为虚拟模块给 inject-css.ts 用
     b.onResolve({ filter: /^virtual:bots-plus-css$/ }, () => ({ path: 'bots-plus-css', namespace: 'virtual' }))
-    b.onLoad({ filter: /.*/, namespace: 'sdk-shim' }, args => {
-      if (args.path !== '@/lib/query-client') {
-        return { errors: [{ text: `没有这个垫片 ${args.path}` }] }
-      }
-
-      return { contents: queryClientShim(), loader: 'js' }
-    })
-
     b.onLoad({ filter: /.*/, namespace: 'virtual' }, () => ({
       contents: `export default ${JSON.stringify(pluginCss)}`,
       loader: 'js'
@@ -132,12 +116,6 @@ const overlay = {
 
     // 官方“新建机器人”窗口：商店排了预设时预填各项，创建后套用工具集/技能/MCP。
     // 只在打包时往官方文件里插几行，官方源码本身不改；锚点对不上就直接报错，提醒跟进官方更新。
-    // 会话右键菜单的重命名成功后没有回调。只改打包副本，官方源码不动。
-    b.onLoad({ filter: /app[\\/]chat[\\/]sidebar[\\/]session-actions-menu\.tsx$/ }, args => ({
-      contents: patchSessionActionsMenu(readFileSync(args.path, 'utf8')),
-      loader: 'tsx'
-    }))
-
     b.onLoad({ filter: /plugins[\\/]hermes-bots[\\/]create-dialog\.tsx$/ }, args => ({
       contents: patchCreateDialog(readFileSync(args.path, 'utf8')),
       loader: 'tsx'
@@ -178,4 +156,6 @@ await build({
   plugins: [overlay],
   logLevel: 'info'
 })
+
+assertNoBundledStores(readFileSync(out, 'utf8'))
 console.log('已生成', out)

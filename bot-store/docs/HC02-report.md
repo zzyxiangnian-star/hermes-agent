@@ -56,3 +56,47 @@ Done in 20067ms
 ```
 
 `plugin.js` 大小：2,680,162 字节。
+
+## R1
+
+不再打包原生 `SessionContextMenu`。普通对话行改用 SDK 的 `ContextMenu*` 自己拼菜单，只有重命名和删除。重命名弹窗和删除确认也用 SDK 的 `Dialog` / `ConfirmDialog`。文案走 `useI18n`。重命名调用 `@/hermes` 的 `renameSession(sessionId, title, backendTargetProfile(...))`，成功后用 SDK 通知 `r.renamed`，并刷新 `['hermes-bots-plus','sessions', bot.name]`。删除仍走原来的 `deleteBotSession`。菜单关掉时如果正要打开重命名框，会拦住焦点回到行按钮。
+
+撤掉了会话菜单的打包补丁、`query-client` 垫片，以及把 `context-menu` / `dropdown-menu` / `copy-button` 排除出 SDK 映射的改动。这三项和 `@/lib/query-client` 恢复整模块指向 SDK。`build-bots-plus.mjs` 在写完 `plugin.js` 后检查，出现 `// src/store/` 模块注释就失败退出。
+
+`npx vitest run --config bot-store/vitest.config.ts --reporter=verbose`：
+
+```
+ ✓ |bot-store| src/preset/apply.test.ts > applyPreset > configures toolsets, adds mcp with config, then installs skills 4ms
+ ✓ |bot-store| src/preset/apply.test.ts > applyPreset > continues after a failed step and notifies the failures 2ms
+ ✓ |bot-store| patches.test.ts > official source patches > create-dialog anchors each appear once and the patch inserts the preset hooks 4ms
+ ✓ |bot-store| patches.test.ts > official source patches > replaces each text-patch anchor and keeps the inserted text 2ms
+ ✓ |bot-store| src/preset/queue.test.ts > preset queue > appends presets as they are queued 3ms
+ ✓ |bot-store| src/preset/queue.test.ts > preset queue > shifts the first preset off the queue 0ms
+ ✓ |bot-store| src/preset/queue.test.ts > preset queue > dequeues a kit one bot at a time 0ms
+ ✓ |bot-store| src/store/catalog.test.ts > parseCatalog > reads the store catalog as 3 bots and 1 kit 22ms
+ ✓ |bot-store| src/store/catalog.test.ts > parseCatalog > skips invalid entries instead of failing the whole catalog 5ms
+ ✓ |bot-store| sdk-map.test.ts > SDK re-export map > every name imported through a mapped module is exported by the plugin SDK 180ms
+ ✓ |bot-store| sdk-map.test.ts > SDK re-export map > treats a copied desktop store module comment as a bad bundle 1ms
+ ✓ |bot-store| src/sessions/bot-sessions.test.ts > bot session menu > gives ordinary chats a rename/delete menu and leaves the pinned and new rows alone 16ms
+ ✓ |bot-store| src/sessions/bot-sessions.test.ts > bot session menu > deletes on the bot route and session id, then refreshes that bot’s list 4ms
+ ✓ |bot-store| src/sessions/bot-sessions.test.ts > bot session menu > does not refresh the list when delete fails 3ms
+ ✓ |bot-store| src/sessions/bot-sessions.test.ts > bot session menu > refreshes that bot’s list after a successful rename 1ms
+ ✓ |bot-store| src/sessions/bot-sessions.test.ts > bot session menu > renames with the bot’s backend profile 0ms
+
+ Test Files  6 passed (6)
+      Tests  16 passed (16)
+   Duration  642ms
+```
+
+`npx tsc -p bot-store/tsconfig.json --noEmit`：退出码 0。
+
+`node bot-store/build-bots-plus.mjs`：
+
+```
+  bot-store\dist\hermes-bots-plus\plugin.js  1.7mb
+
+Done in 18668ms
+已生成 F:\Hermes改造\hermes-agent-cursor\bot-store\dist\hermes-bots-plus\plugin.js
+```
+
+`plugin.js` 大小：1,736,695 字节。打包检查没有发现 `// src/store/`。
